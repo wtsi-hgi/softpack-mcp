@@ -1,0 +1,68 @@
+[project]
+name = "softpack-mcp"
+version = "0.1.0"
+description = "FastAPI-based MCP server for connecting softpack spack building commands to external services and LLMs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "mcp>=1.0.0",
+    "fastapi-mcp>=0.3.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "httpx>=0.25.0",
+    "python-multipart>=0.0.6",
+    "python-dotenv>=1.0.0",
+    "typer>=0.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.5.0",
+]
+
+[project.scripts]
+softpack-mcp = "softpack_mcp.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+fix = true
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "F403",  # Star imports are used for model re-exports
+    "F405",  # Names may be undefined from star imports
+    "B008",  # FastAPI dependency injection pattern
+    "B904",  # Exception chaining not always needed
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+asyncio_mode = "auto"
