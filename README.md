@@ -1,13 +1,12 @@
 # Softpack MCP Server
 
-A FastAPI-based MCP (Model Context Protocol) server that enables LLMs to interact with spack package building commands. This server is part of the Softpack ecosystem and provides a bridge between language models and the spack package manager.
+A FastAPI-based MCP (Model Context Protocol) server that enables LLMs to interact with spack package management commands. This server is part of the Softpack ecosystem and provides a bridge between language models and the spack package manager.
 
 ## Features
 
 - 🚀 **FastAPI Integration**: Modern async/await web framework
 - 🔧 **MCP Protocol**: Seamless integration with language models
 - 📦 **Spack Commands**: Direct interface to spack package management
-- 🔧 **VM Deployment**: Designed for virtual machine deployment
 - 📊 **Structured Logging**: Comprehensive logging with rotation
 - 🛡️ **Error Handling**: Robust exception handling and validation
 - 🔒 **Security**: CORS and authentication support
@@ -31,7 +30,6 @@ The server exposes the following tools to LLMs:
 - Python 3.8+
 - Spack package manager installed
 
-
 ### Installation
 
 1. **Clone the repository:**
@@ -40,72 +38,28 @@ The server exposes the following tools to LLMs:
    cd softpack-mcp
    ```
 
-2. **Install dependencies:**
+2. **Initialize the project:**
    ```bash
-   pip install -e .
+   make init
    ```
 
-3. **Configure environment:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your settings
-   ```
-
-### Configuration
-
-Create a `.env` file in the project root:
-
-```env
-# Server Settings
-SOFTPACK_HOST=127.0.0.1
-SOFTPACK_PORT=8000
-SOFTPACK_DEBUG=false
-
-# Spack Settings
-SOFTPACK_SPACK_EXECUTABLE=spack
-
-# Logging
-SOFTPACK_LOG_LEVEL=INFO
-SOFTPACK_LOG_FILE=logs/softpack-mcp.log
-
-# Security
-SOFTPACK_ALLOWED_ORIGINS=*
-```
+This will:
+- Install dependencies with uv
+- Set up pre-commit hooks
+- Create necessary directories
+- Create a `.env` file with default values
 
 ### Running the Server
 
 #### Development Mode
 
 ```bash
-# Direct with uvicorn
-uvicorn softpack_mcp.main:app --host 127.0.0.1 --port 8000 --reload
+make debug
 ```
 
 #### Production Mode
 
 ```bash
-uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000
-```
-
-#### Using Makefile
-
-```bash
-# Development mode
-make debug
-
-# Production mode
-make prod
-```
-
-### Quick Commands
-
-Start the server using uvicorn or the Makefile:
-
-```bash
-# Development mode
-make debug
-
-# Production mode
 make prod
 ```
 
@@ -114,8 +68,6 @@ make prod
 Once the server is running, visit:
 
 - **Interactive API Docs**: http://localhost:8000/docs
-- **Alternative Docs**: http://localhost:8000/redoc
-- **OpenAPI Spec**: http://localhost:8000/openapi.json
 - **MCP Endpoint**: http://localhost:8000/mcp
 
 ## MCP Integration
@@ -125,7 +77,6 @@ This server implements the Model Context Protocol (MCP), allowing language model
 1. **Discover Tools**: Automatically detect available spack commands
 2. **Execute Commands**: Run spack operations through structured API calls
 3. **Get Results**: Receive formatted responses with error handling
-4. **Stream Logs**: Access real-time build logs and progress
 
 ### Example MCP Tool Usage
 
@@ -146,11 +97,8 @@ This server implements the Model Context Protocol (MCP), allowing language model
 ### Setup Development Environment
 
 ```bash
-# Install in development mode
-pip install -e ".[dev]"
-
-# Install pre-commit hooks
-pre-commit install
+# Initialize the project (installs dependencies and sets up pre-commit)
+make init
 ```
 
 ### Running Tests
@@ -161,23 +109,17 @@ pytest
 
 # Run with coverage
 pytest --cov=softpack_mcp
-
-# Run specific test file
-pytest tests/test_main.py
 ```
 
 ### Code Quality
 
 ```bash
-# Format code
-black softpack_mcp/
-isort softpack_mcp/
+# Format and lint code
+uv run ruff check . --fix
+uv run ruff format .
 
-# Lint code
-ruff check softpack_mcp/
-
-# Type checking
-mypy softpack_mcp/
+# Run pre-commit on all files
+uv run pre-commit run --all-files
 ```
 
 ## Project Structure
@@ -188,7 +130,6 @@ softpack-mcp/
 │   ├── __init__.py
 │   ├── main.py            # FastAPI application
 │   ├── config.py          # Configuration management
-
 │   ├── models/            # Pydantic models
 │   │   ├── requests.py    # Request models
 │   │   └── responses.py   # Response models
@@ -200,8 +141,6 @@ softpack-mcp/
 │       ├── logging.py     # Logging configuration
 │       └── exceptions.py  # Custom exceptions
 ├── tests/                 # Test suite
-├── docs/                  # Documentation
-
 ├── pyproject.toml        # Project configuration
 └── README.md            # This file
 ```
@@ -230,7 +169,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Built with [FastAPI](https://fastapi.tiangolo.com/)
-- MCP integration via [fastapi-mcp](https://github.com/pydantic/fastapi-mcp)
 - Spack package manager support
 - Part of the Softpack ecosystem
 
@@ -240,32 +178,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 This project uses `ruff` for code formatting and linting via pre-commit hooks.
 
-#### Installation
-
-The project is configured to work with `uvx` for running pre-commit in an isolated environment:
-
 ```bash
-# Install pre-commit hooks using uvx (recommended)
-uvx pre-commit install
-
-# Run pre-commit on all files
-uvx pre-commit run --all-files
-```
-
-If `uvx` has issues (e.g., missing sqlite3), you can use the project's virtual environment:
-
-```bash
-# Install dependencies including pre-commit
-uv sync --dev
-
-# Install pre-commit hooks
-uv run pre-commit install
+# Initialize the project
+make init
 
 # Run pre-commit on all files
 uv run pre-commit run --all-files
 ```
 
-#### Ruff Configuration
+### Ruff Configuration
 
 The project uses ruff for:
 - Code formatting (replaces black)
@@ -276,42 +197,15 @@ Configuration is in `pyproject.toml` under `[tool.ruff]`.
 
 ### Logging
 
-This project uses [loguru](https://loguru.readthedocs.io/) for structured logging instead of the standard logging module.
+This project uses structured logging with automatic log rotation.
 
 Features:
 - Colored console output
 - Structured logging with context
 - Automatic log rotation
 - Exception tracing
-- JSON serialization support
 
-#### Usage Examples
-
-```python
-from loguru import logger
-
-# Basic logging
-logger.info("Server started")
-logger.error("Something went wrong")
-
-# Structured logging with context
-logger.info("Processing package", package="numpy", version="1.21.0")
-
-# Exception logging with traceback
-try:
-    some_operation()
-except Exception:
-    logger.exception("Operation failed")
-```
-
-#### Configuration
-
-Logging is configured in `softpack_mcp/utils/logging.py`. The setup includes:
-- Console handler with colored output
-- File handler with rotation (10MB, 1 month retention)
-- Automatic interception of standard library logging
-
-#### Manual Ruff Usage
+### Manual Ruff Usage
 
 You can also run ruff directly:
 
