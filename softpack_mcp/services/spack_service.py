@@ -1,31 +1,35 @@
 """
-Spack service implementation.
+Spack service for managing spack operations.
 """
 
 import asyncio
-import logging
 from pathlib import Path
 from typing import Any
 
-from ..config import Settings
-from ..models.responses import (
-    SpackBuildInfo,
-    SpackPackage,
-)
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from ..models.responses import OperationResult, SpackBuildInfo, SpackPackage
 
 
 class SpackService:
-    """Service for managing spack packages and builds."""
+    """Service for interacting with Spack package manager."""
 
-    def __init__(self, settings: Settings):
-        """Initialize the spack service."""
-        self.settings = settings
-        self.spack_executable = settings.spack_executable
+    def __init__(self, spack_root: str = "/opt/spack"):
+        """
+        Initialize Spack service.
+
+        Args:
+            spack_root: Path to spack installation
+        """
+        self.spack_root = Path(spack_root)
+        self.spack_cmd = self.spack_root / "bin" / "spack"
+        logger.info("Initialized SpackService", spack_root=spack_root)
 
     async def _run_command(
-        self, command: list[str], cwd: Path | None = None, timeout: int | None = None
+        self,
+        command: list[str],
+        cwd: Path | None = None,
+        timeout: int = 300,
     ) -> dict[str, Any]:
         """
         Run a shell command asynchronously.
@@ -38,51 +42,62 @@ class SpackService:
         Returns:
             Command execution result
         """
-        start_time = asyncio.get_event_loop().time()
-        timeout = timeout or self.settings.command_timeout
+        logger.debug("Running command", command=" ".join(command), cwd=str(cwd))
 
         try:
             process = await asyncio.create_subprocess_exec(
-                *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd
+                *command,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout,
+            )
 
-            execution_time = asyncio.get_event_loop().time() - start_time
-
-            return {
-                "command": " ".join(command),
-                "exit_code": process.returncode or 0,
+            result = {
+                "returncode": process.returncode,
                 "stdout": stdout.decode("utf-8") if stdout else "",
                 "stderr": stderr.decode("utf-8") if stderr else "",
-                "execution_time": execution_time,
-                "working_directory": str(cwd) if cwd else None,
+                "success": process.returncode == 0,
             }
+
+            if not result["success"]:
+                logger.error(
+                    "Command failed",
+                    command=" ".join(command),
+                    returncode=process.returncode,
+                    stderr=result["stderr"],
+                )
+            else:
+                logger.debug("Command completed successfully", command=" ".join(command))
+
+            return result
 
         except asyncio.TimeoutError:
-            logger.error(f"Command timed out: {' '.join(command)}")
-            execution_time = asyncio.get_event_loop().time() - start_time
+            logger.error("Command timed out", command=" ".join(command), timeout=timeout)
             return {
-                "command": " ".join(command),
-                "exit_code": 124,  # Timeout exit code
+                "returncode": -1,
                 "stdout": "",
-                "stderr": "Command timed out",
-                "execution_time": execution_time,
-                "working_directory": str(cwd) if cwd else None,
+                "stderr": f"Command timed out after {timeout} seconds",
+                "success": False,
             }
         except Exception as e:
-            logger.error(f"Command failed: {' '.join(command)}: {e}")
-            execution_time = asyncio.get_event_loop().time() - start_time
+            logger.exception("Command execution failed", command=" ".join(command), error=str(e))
             return {
-                "command": " ".join(command),
-                "exit_code": 1,
+                "returncode": -1,
                 "stdout": "",
                 "stderr": str(e),
-                "execution_time": execution_time,
-                "working_directory": str(cwd) if cwd else None,
+                "success": False,
             }
 
-    async def search_packages(self, query: str = "", limit: int = 10) -> list[SpackPackage]:
+    async def search_packages(
+        self,
+        query: str = "",
+        limit: int = 50,
+    ) -> list[SpackPackage]:
         """
         Search for spack packages.
 
@@ -93,31 +108,35 @@ class SpackService:
         Returns:
             List of spack packages
         """
-        if not self.spack_executable:
-            logger.warning("Spack executable not configured")
-            return []
+        logger.info("Searching packages", query=query, limit=limit)
 
-        command = [self.spack_executable, "list"]
+        cmd = [str(self.spack_cmd), "list"]
         if query:
-            command.append(query)
+            cmd.append(query)
 
-        result = await self._run_command(command)
+        result = await self._run_command(cmd)
 
-        if result["exit_code"] != 0:
-            logger.error(f"Failed to search packages: {result['stderr']}")
+        if not result["success"]:
+            logger.error("Package search failed", error=result["stderr"])
             return []
 
         packages = []
-        lines = result["stdout"].strip().split("\n")[:limit]
+        lines = result["stdout"].strip().split("\n")
 
-        for line in lines:
-            package_name = line.strip()
-            if package_name:
-                package = SpackPackage(
-                    name=package_name, version="latest", description=f"Spack package: {package_name}"
+        for line in lines[:limit]:
+            line = line.strip()
+            if line and not line.startswith("="):
+                packages.append(
+                    SpackPackage(
+                        name=line,
+                        version="latest",
+                        description=f"Spack package: {line}",
+                        homepage="",
+                        variants=[],
+                    )
                 )
-                packages.append(package)
 
+        logger.info("Found packages", count=len(packages))
         return packages
 
     async def install_package(
@@ -126,7 +145,7 @@ class SpackService:
         version: str | None = None,
         variants: list[str] | None = None,
         dependencies: list[str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> OperationResult:
         """
         Install a spack package.
 
@@ -139,48 +158,42 @@ class SpackService:
         Returns:
             Installation result
         """
-        if not self.spack_executable:
-            raise ValueError("Spack executable not configured")
-
-        # Build package spec
         spec = package_name
         if version:
             spec += f"@{version}"
+
         if variants:
-            spec += " " + " ".join(variants)
-        if dependencies:
-            for dep in dependencies:
-                spec += f" ^{dep}"
+            for variant in variants:
+                spec += f" {variant}"
 
-        command = [self.spack_executable, "install", spec]
+        logger.info("Installing package", package=spec)
 
-        logger.info(f"Installing package: {spec}")
-        result = await self._run_command(command, timeout=self.settings.command_timeout)
+        cmd = [str(self.spack_cmd), "install", spec]
 
-        if result["exit_code"] != 0:
-            raise Exception(f"Installation failed: {result['stderr']}")
+        result = await self._run_command(cmd, timeout=1800)  # 30 minutes timeout
 
-        return {
-            "success": True,
-            "package_name": package_name,
-            "version": version or "latest",
-            "install_path": self._extract_install_path(result["stdout"]),
-            "build_log": result["stdout"],
-        }
+        if result["success"]:
+            logger.success("Package installed successfully", package=spec)
+            message = f"Successfully installed {spec}"
+        else:
+            logger.error("Package installation failed", package=spec, error=result["stderr"])
+            message = f"Failed to install {spec}: {result['stderr']}"
 
-    def _extract_install_path(self, stdout: str) -> str | None:
-        """Extract installation path from spack output."""
-        # Look for installation path in output
-        for line in stdout.split("\n"):
-            if "installed" in line.lower() and "/" in line:
-                # Simple heuristic to find path-like strings
-                words = line.split()
-                for word in words:
-                    if word.startswith("/") and len(word) > 10:
-                        return word
-        return None
+        return OperationResult(
+            success=result["success"],
+            message=message,
+            details={
+                "package": spec,
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+            },
+        )
 
-    async def get_build_info(self, package_name: str, version: str | None = None) -> SpackBuildInfo | None:
+    async def get_build_info(
+        self,
+        package_name: str,
+        version: str | None = None,
+    ) -> SpackBuildInfo:
         """
         Get build information for a spack package.
 
@@ -191,43 +204,53 @@ class SpackService:
         Returns:
             Build information
         """
-        if not self.spack_executable:
-            logger.warning("Spack executable not configured")
-            return None
-
         spec = package_name
         if version:
             spec += f"@{version}"
 
-        command = [self.spack_executable, "spec", "-I", spec]
-        result = await self._run_command(command)
+        logger.info("Getting build info", package=spec)
 
-        if result["exit_code"] != 0:
-            logger.error(f"Failed to get build info: {result['stderr']}")
-            return None
+        cmd = [str(self.spack_cmd), "info", spec]
+        result = await self._run_command(cmd)
 
-        # Parse spec output
+        if not result["success"]:
+            logger.error("Failed to get build info", package=spec, error=result["stderr"])
+            return SpackBuildInfo(
+                package_name=package_name,
+                version=version or "unknown",
+                build_system="unknown",
+                dependencies=[],
+                build_flags={},
+                install_path=None,
+            )
+
+        # Parse the info output (simplified)
+        lines = result["stdout"].split("\n")
         dependencies = []
-        build_system = "unknown"
+        variants = []
 
-        for line in result["stdout"].split("\n"):
-            if line.strip().startswith("^"):
-                # This is a dependency
-                dep_name = line.strip().lstrip("^").split("@")[0]
-                dependencies.append(dep_name)
-            elif "build_system" in line:
-                build_system = line.split("=")[-1].strip()
+        for line in lines:
+            line = line.strip()
+            if "depends_on" in line:
+                dependencies.append(line)
+            elif "variant" in line:
+                variants.append(line)
 
         return SpackBuildInfo(
             package_name=package_name,
             version=version or "latest",
-            build_system=build_system,
+            build_system="unknown",
             dependencies=dependencies,
-            build_flags={"spec": spec},
+            build_flags={"variants": variants},
             install_path=None,
         )
 
-    async def uninstall_package(self, package_name: str, version: str | None = None, force: bool = False) -> bool:
+    async def uninstall_package(
+        self,
+        package_name: str,
+        version: str | None = None,
+        force: bool = False,
+    ) -> bool:
         """
         Uninstall a spack package.
 
@@ -239,22 +262,31 @@ class SpackService:
         Returns:
             True if successful
         """
-        if not self.spack_executable:
-            raise ValueError("Spack executable not configured")
-
         spec = package_name
         if version:
             spec += f"@{version}"
 
-        command = [self.spack_executable, "uninstall"]
+        logger.info("Uninstalling package", package=spec, force=force)
+
+        cmd = [str(self.spack_cmd), "uninstall"]
         if force:
-            command.append("--force")
-        command.append(spec)
+            cmd.append("--force")
+        cmd.append(spec)
 
-        result = await self._run_command(command)
-        return result["exit_code"] == 0
+        result = await self._run_command(cmd)
 
-    async def get_package_info(self, package_name: str, version: str | None = None) -> SpackPackage | None:
+        if result["success"]:
+            logger.success("Package uninstalled successfully", package=spec)
+        else:
+            logger.error("Package uninstallation failed", package=spec, error=result["stderr"])
+
+        return result["success"]
+
+    async def get_package_info(
+        self,
+        package_name: str,
+        version: str | None = None,
+    ) -> SpackPackage:
         """
         Get detailed package information.
 
@@ -265,73 +297,87 @@ class SpackService:
         Returns:
             Package information
         """
-        if not self.spack_executable:
-            logger.warning("Spack executable not configured")
-            return None
+        spec = package_name
+        if version:
+            spec += f"@{version}"
 
-        command = [self.spack_executable, "info", package_name]
-        result = await self._run_command(command)
+        logger.info("Getting package info", package=spec)
 
-        if result["exit_code"] != 0:
-            logger.error(f"Failed to get package info: {result['stderr']}")
-            return None
+        cmd = [str(self.spack_cmd), "info", spec]
+        result = await self._run_command(cmd)
 
-        # Parse package info
+        if not result["success"]:
+            logger.error("Failed to get package info", package=spec, error=result["stderr"])
+            return SpackPackage(
+                name=package_name,
+                version=version or "unknown",
+                description="Package information unavailable",
+                homepage="",
+                variants=[],
+            )
+
+        # Parse the info output (simplified)
+        lines = result["stdout"].split("\n")
         description = ""
         homepage = ""
+        dependencies = []
         variants = []
 
-        lines = result["stdout"].split("\n")
-        for i, line in enumerate(lines):
-            if line.strip().startswith("Description:"):
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Description:"):
                 description = line.replace("Description:", "").strip()
-            elif line.strip().startswith("Homepage:"):
+            elif line.startswith("Homepage:"):
                 homepage = line.replace("Homepage:", "").strip()
-            elif "variants" in line.lower():
-                # Try to extract variants from next few lines
-                for j in range(i + 1, min(i + 10, len(lines))):
-                    variant_line = lines[j].strip()
-                    if variant_line and not variant_line.startswith("Name:"):
-                        variants.append(variant_line)
-                    elif variant_line.startswith("Name:"):
-                        break
+            elif "depends_on" in line:
+                dependencies.append(line)
+            elif "variant" in line:
+                variants.append(line)
 
         return SpackPackage(
             name=package_name,
             version=version or "latest",
-            description=description,
+            description=description or f"Spack package: {package_name}",
             homepage=homepage,
             variants=variants,
         )
 
-    async def list_compilers(self) -> list[dict[str, Any]]:
+    async def list_compilers(self) -> dict[str, Any]:
         """
         List available compilers.
 
         Returns:
             List of compiler information
         """
-        if not self.spack_executable:
-            logger.warning("Spack executable not configured")
-            return []
+        logger.info("Listing compilers")
 
-        command = [self.spack_executable, "compiler", "list"]
-        result = await self._run_command(command)
+        cmd = [str(self.spack_cmd), "compiler", "list"]
+        result = await self._run_command(cmd)
 
-        if result["exit_code"] != 0:
-            logger.error(f"Failed to list compilers: {result['stderr']}")
-            return []
+        if not result["success"]:
+            logger.error("Failed to list compilers", error=result["stderr"])
+            return {"compilers": [], "error": result["stderr"]}
 
+        # Parse compiler output (simplified)
         compilers = []
-        current_arch = None
+        lines = result["stdout"].split("\n")
 
-        for line in result["stdout"].split("\n"):
+        for line in lines:
             line = line.strip()
-            if line.endswith(":"):
-                # This is an architecture line
-                current_arch = line.rstrip(":")
-            elif line and current_arch:
-                # This is a compiler
-                compilers.append({"name": line, "architecture": current_arch})
+            if line and not line.startswith("=") and not line.startswith("--"):
+                compilers.append(line)
 
-        return compilers
+        logger.info("Found compilers", count=len(compilers))
+        return {"compilers": compilers}
+
+
+# Global service instance
+_spack_service: SpackService | None = None
+
+
+def get_spack_service() -> SpackService:
+    """Get the global spack service instance."""
+    global _spack_service
+    if _spack_service is None:
+        _spack_service = SpackService()
+    return _spack_service

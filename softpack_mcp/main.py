@@ -1,121 +1,66 @@
 """
-Main FastAPI application with MCP integration.
+Main FastAPI application for Softpack MCP server.
 """
 
-import logging
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_mcp import FastApiMCP
+from loguru import logger
 
 from .config import get_settings
-from .tools import spack_router
+from .tools.spack import router as spack_router
 from .utils.exceptions import setup_exception_handlers
 from .utils.logging import setup_logging
-
-# Initialize settings
-settings = get_settings()
-
-# Setup logging
-setup_logging(settings.log_level)
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifespan."""
-    logger.info("Starting Softpack MCP Server...")
+    """Application lifespan management."""
+    settings = get_settings()
+    setup_logging(settings.log_level)
+    logger.info("Starting Softpack MCP server")
 
-    # Startup
-    try:
-        # Initialize any required services here
-        logger.info("All services initialized successfully")
-        yield
-    except Exception as e:
-        logger.error(f"Failed to initialize services: {e}")
-        raise
-    finally:
-        # Cleanup
-        logger.info("Shutting down Softpack MCP Server...")
+    yield
+
+    logger.info("Shutting down Softpack MCP server")
 
 
-# Create FastAPI application
-app = FastAPI(
-    title="Softpack MCP Server",
-    description="FastAPI-based MCP server for softpack to interface with spack commands",
-    version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
-    lifespan=lifespan,
-)
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application."""
+    settings = get_settings()
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    app = FastAPI(
+        title="Softpack MCP Server",
+        description="FastAPI-based MCP server for Softpack spack building commands",
+        version="0.1.0",
+        docs_url="/docs" if settings.debug else None,
+        redoc_url="/redoc" if settings.debug else None,
+        lifespan=lifespan,
+    )
 
-# Setup exception handlers
-setup_exception_handlers(app)
+    # CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# Create MCP server instance
-mcp = FastApiMCP(app)
+    # Exception handlers
+    setup_exception_handlers(app)
 
-# Include routers
-app.include_router(spack_router, prefix="/api/v1/spack", tags=["spack"])
+    # Include routers
+    app.include_router(spack_router, prefix="/api/v1/spack", tags=["spack"])
 
-# Mount MCP server
-mcp.mount()
+    @app.get("/health")
+    async def health_check():
+        """Health check endpoint."""
+        return {"status": "healthy", "service": "softpack-mcp"}
 
-
-@app.get("/")
-async def root() -> dict[str, str]:
-    """Root endpoint."""
-    return {
-        "message": "Softpack MCP Server",
-        "version": "0.1.0",
-        "docs": "/docs",
-        "mcp": "/mcp",
-    }
+    return app
 
 
-@app.get("/health")
-async def health_check() -> dict[str, Any]:
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "version": "0.1.0",
-        "timestamp": "2025-01-03T00:00:00Z",
-        "services": {
-            "fastapi": "running",
-            "mcp": "running",
-        },
-    }
-
-
-@app.get("/info")
-async def server_info() -> dict[str, Any]:
-    """Server information endpoint."""
-    return {
-        "name": "Softpack MCP Server",
-        "version": "0.1.0",
-        "description": "FastAPI-based MCP server for softpack to interface with spack commands",
-        "features": [
-            "Spack package building",
-            "MCP tool integration",
-            "Async/await support",
-            "Authentication",
-        ],
-        "endpoints": {
-            "docs": "/docs",
-            "health": "/health",
-            "mcp": "/mcp",
-            "spack": "/api/v1/spack",
-        },
-    }
+# Application instance
+app = create_app()

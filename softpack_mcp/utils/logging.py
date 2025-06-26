@@ -1,141 +1,142 @@
 """
-Logging configuration and utilities.
+Logging configuration using loguru.
 """
 
-import logging
-import logging.config
 import sys
+from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 
 def setup_logging(log_level: str = "info") -> None:
     """
-    Setup application logging configuration.
+    Setup loguru logging configuration.
 
     Args:
-        log_level: Logging level (debug, info, warning, error, critical)
+        log_level: Logging level (trace, debug, info, success, warning, error, critical)
     """
-    level = getattr(logging, log_level.upper(), logging.INFO)
+    # Remove default handler
+    logger.remove()
 
-    config: dict[str, Any] = {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "default": {
-                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                "datefmt": "%Y-%m-%d %H:%M:%S",
-            },
-            "detailed": {
-                "format": (
-                    "%(asctime)s - %(name)s - %(levelname)s - " "%(filename)s:%(lineno)d - %(funcName)s() - %(message)s"
-                ),
-                "datefmt": "%Y-%m-%d %H:%M:%S",
-            },
-        },
-        "handlers": {
-            "console": {
-                "class": "logging.StreamHandler",
-                "stream": sys.stdout,
-                "formatter": "default",
-                "level": level,
-            },
-            "file": {
-                "class": "logging.handlers.RotatingFileHandler",
-                "filename": "softpack_mcp.log",
-                "maxBytes": 10485760,  # 10MB
-                "backupCount": 5,
-                "formatter": "detailed",
-                "level": level,
-            },
-        },
-        "loggers": {
-            "softpack_mcp": {
-                "handlers": ["console", "file"],
-                "level": level,
-                "propagate": False,
-            },
-            "fastapi": {
-                "handlers": ["console"],
-                "level": "INFO",
-                "propagate": False,
-            },
-            "uvicorn": {
-                "handlers": ["console"],
-                "level": "INFO",
-                "propagate": False,
-            },
-        },
-        "root": {
-            "handlers": ["console"],
-            "level": level,
-        },
-    }
+    # Normalize log level
+    level = log_level.upper()
+    if level not in ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]:
+        level = "INFO"
 
-    logging.config.dictConfig(config)
+    # Console handler with colored output
+    logger.add(
+        sys.stdout,
+        level=level,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+        ),
+        colorize=True,
+    )
 
-    # Set up uvicorn logging
-    uvicorn_logger = logging.getLogger("uvicorn")
-    uvicorn_logger.setLevel(level)
+    # File handler with detailed information
+    log_file = Path("softpack_mcp.log")
+    logger.add(
+        log_file,
+        level=level,
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
+        rotation="10 MB",
+        retention="1 month",
+        compression="gz",
+        serialize=False,
+    )
 
-    # Suppress some noisy loggers in production
-    if log_level.upper() not in ["DEBUG"]:
+    # Configure third-party loggers to use loguru
+    import logging
+
+    class InterceptHandler(logging.Handler):
+        """Intercept standard logging and redirect to loguru."""
+
+        def emit(self, record):
+            # Get corresponding Loguru level if it exists
+            try:
+                level = logger.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
+
+            # Find caller from where originated the logged message
+            frame, depth = sys._getframe(6), 6
+            while frame and frame.f_code.co_filename == logging.__file__:
+                frame = frame.f_back
+                depth += 1
+
+            logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+    # Intercept all standard logging
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+
+    # Suppress noisy loggers in production
+    if level not in ["DEBUG", "TRACE"]:
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("httpcore").setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
-def get_logger(name: str) -> logging.Logger:
+def get_logger(name: str):
     """
-    Get a logger instance for the given name.
+    Get a loguru logger instance.
 
     Args:
-        name: Logger name
+        name: Logger name (will be prefixed with softpack_mcp)
 
     Returns:
-        Logger instance
+        Logger instance bound with name context
     """
-    return logging.getLogger(f"softpack_mcp.{name}")
+    return logger.bind(name=f"softpack_mcp.{name}")
 
 
 class StructuredLogger:
-    """Structured logger with additional context."""
+    """Structured logger with additional context using loguru."""
 
     def __init__(self, name: str):
         """Initialize structured logger."""
-        self.logger = get_logger(name)
+        self.logger = logger.bind(name=f"softpack_mcp.{name}")
         self.context: dict[str, Any] = {}
 
     def add_context(self, **kwargs: Any) -> None:
         """Add context to all log messages."""
         self.context.update(kwargs)
+        self.logger = self.logger.bind(**self.context)
 
     def clear_context(self) -> None:
         """Clear logging context."""
         self.context.clear()
+        self.logger = logger.bind(name=f"softpack_mcp.{self.logger.bind().context.get('name', 'unknown')}")
 
-    def _format_message(self, message: str, **kwargs: Any) -> str:
-        """Format message with context."""
-        full_context = {**self.context, **kwargs}
-        if full_context:
-            context_str = " | ".join(f"{k}={v}" for k, v in full_context.items())
-            return f"{message} | {context_str}"
-        return message
+    def trace(self, message: str, **kwargs: Any) -> None:
+        """Log trace message with context."""
+        self.logger.bind(**kwargs).trace(message)
 
     def debug(self, message: str, **kwargs: Any) -> None:
         """Log debug message with context."""
-        self.logger.debug(self._format_message(message, **kwargs))
+        self.logger.bind(**kwargs).debug(message)
 
     def info(self, message: str, **kwargs: Any) -> None:
         """Log info message with context."""
-        self.logger.info(self._format_message(message, **kwargs))
+        self.logger.bind(**kwargs).info(message)
+
+    def success(self, message: str, **kwargs: Any) -> None:
+        """Log success message with context."""
+        self.logger.bind(**kwargs).success(message)
 
     def warning(self, message: str, **kwargs: Any) -> None:
         """Log warning message with context."""
-        self.logger.warning(self._format_message(message, **kwargs))
+        self.logger.bind(**kwargs).warning(message)
 
     def error(self, message: str, **kwargs: Any) -> None:
         """Log error message with context."""
-        self.logger.error(self._format_message(message, **kwargs))
+        self.logger.bind(**kwargs).error(message)
 
     def critical(self, message: str, **kwargs: Any) -> None:
         """Log critical message with context."""
-        self.logger.critical(self._format_message(message, **kwargs))
+        self.logger.bind(**kwargs).critical(message)
+
+    def exception(self, message: str, **kwargs: Any) -> None:
+        """Log exception with traceback."""
+        self.logger.bind(**kwargs).exception(message)

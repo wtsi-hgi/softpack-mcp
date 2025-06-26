@@ -290,6 +290,43 @@ The project uses ruff for:
 
 Configuration is in `pyproject.toml` under `[tool.ruff]`.
 
+### Logging
+
+This project uses [loguru](https://loguru.readthedocs.io/) for structured logging instead of the standard logging module.
+
+Features:
+- Colored console output
+- Structured logging with context
+- Automatic log rotation
+- Exception tracing
+- JSON serialization support
+
+#### Usage Examples
+
+```python
+from loguru import logger
+
+# Basic logging
+logger.info("Server started")
+logger.error("Something went wrong")
+
+# Structured logging with context
+logger.info("Processing package", package="numpy", version="1.21.0")
+
+# Exception logging with traceback
+try:
+    some_operation()
+except Exception:
+    logger.exception("Operation failed")
+```
+
+#### Configuration
+
+Logging is configured in `softpack_mcp/utils/logging.py`. The setup includes:
+- Console handler with colored output
+- File handler with rotation (10MB, 1 month retention)
+- Automatic interception of standard library logging
+
 #### Manual Ruff Usage
 
 You can also run ruff directly:
