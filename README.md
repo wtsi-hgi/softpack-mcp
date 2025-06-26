@@ -7,7 +7,7 @@ A FastAPI-based MCP (Model Context Protocol) server that enables LLMs to interac
 - 🚀 **FastAPI Integration**: Modern async/await web framework
 - 🔧 **MCP Protocol**: Seamless integration with language models
 - 📦 **Spack Commands**: Direct interface to spack package management
-- 🐳 **Docker Support**: Containerized deployment
+- 🔧 **VM Deployment**: Designed for virtual machine deployment
 - 📊 **Structured Logging**: Comprehensive logging with rotation
 - 🛡️ **Error Handling**: Robust exception handling and validation
 - 🔒 **Security**: CORS and authentication support
@@ -21,11 +21,8 @@ The server exposes the following tools to LLMs:
 - `search_packages` - Search for available spack packages
 - `install_package` - Install a spack package with variants
 - `list_packages` - List installed packages
-- `package_info` - Get detailed package information
-- `build_info` - Get package build information
+- `get_package_info` - Get comprehensive package information (includes dependencies, variants, build details)
 - `uninstall_package` - Remove installed packages
-- `compiler_list` - List available compilers
-- `compiler_info` - Get compiler details
 
 ## Quick Start
 
@@ -33,7 +30,7 @@ The server exposes the following tools to LLMs:
 
 - Python 3.8+
 - Spack package manager installed
-- (Optional) Docker for containerized deployment
+
 
 ### Installation
 
@@ -66,15 +63,12 @@ SOFTPACK_DEBUG=false
 
 # Spack Settings
 SOFTPACK_SPACK_EXECUTABLE=spack
-SOFTPACK_SPACK_ENV=
-SOFTPACK_SPACK_CONFIG_DIR=
 
 # Logging
 SOFTPACK_LOG_LEVEL=INFO
 SOFTPACK_LOG_FILE=logs/softpack-mcp.log
 
 # Security
-SOFTPACK_API_KEY=your-secret-key
 SOFTPACK_ALLOWED_ORIGINS=*
 ```
 
@@ -83,45 +77,36 @@ SOFTPACK_ALLOWED_ORIGINS=*
 #### Development Mode
 
 ```bash
-# Using the CLI
-softpack-mcp serve --host 127.0.0.1 --port 8000 --reload
-
-# Or directly with uvicorn
+# Direct with uvicorn
 uvicorn softpack_mcp.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 #### Production Mode
 
 ```bash
-softpack-mcp serve --host 0.0.0.0 --port 8000
+uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000
 ```
 
-#### Docker Deployment
+#### Using Makefile
 
 ```bash
-# Build the image
-docker build -t softpack-mcp .
+# Development mode
+make debug
 
-# Run with docker-compose
-docker-compose up -d
+# Production mode
+make prod
 ```
 
-### CLI Commands
+### Quick Commands
 
-The server includes a comprehensive CLI:
+Start the server using uvicorn or the Makefile:
 
 ```bash
-# Start the server
-softpack-mcp serve --host 127.0.0.1 --port 8000
+# Development mode
+make debug
 
-# Show configuration
-softpack-mcp config
-
-# Check system requirements
-softpack-mcp check
-
-# Show version
-softpack-mcp version
+# Production mode
+make prod
 ```
 
 ## API Documentation
@@ -203,7 +188,7 @@ softpack-mcp/
 │   ├── __init__.py
 │   ├── main.py            # FastAPI application
 │   ├── config.py          # Configuration management
-│   ├── cli.py             # Command line interface
+
 │   ├── models/            # Pydantic models
 │   │   ├── requests.py    # Request models
 │   │   └── responses.py   # Response models
@@ -216,8 +201,7 @@ softpack-mcp/
 │       └── exceptions.py  # Custom exceptions
 ├── tests/                 # Test suite
 ├── docs/                  # Documentation
-├── Dockerfile            # Container configuration
-├── docker-compose.yml    # Container orchestration
+
 ├── pyproject.toml        # Project configuration
 └── README.md            # This file
 ```

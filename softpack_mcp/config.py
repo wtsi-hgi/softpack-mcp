@@ -17,7 +17,6 @@ class Settings(BaseSettings):
 
     # Security settings
     allowed_origins: list[str] = Field(default=["*"], description="Allowed CORS origins")
-    api_key: str = Field(default="", description="API key for authentication")
 
     # Logging settings
     log_level: str = Field(default="INFO", description="Logging level")
@@ -27,16 +26,9 @@ class Settings(BaseSettings):
 
     # Spack settings
     spack_executable: str = Field(default="spack", description="Path to spack executable")
-    spack_env: str = Field(default="", description="Default spack environment")
-    spack_config_dir: str = Field(default="", description="Spack configuration directory")
 
     # Command execution settings
     command_timeout: int = Field(default=300, description="Command execution timeout in seconds")
-    max_parallel_jobs: int = Field(default=4, description="Maximum parallel jobs for builds")
-
-    # MCP settings
-    mcp_server_name: str = Field(default="softpack-mcp", description="MCP server name")
-    mcp_server_version: str = Field(default="0.1.0", description="MCP server version")
 
     model_config = {
         "env_file": ".env",

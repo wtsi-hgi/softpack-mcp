@@ -8,22 +8,26 @@ from typing import Any
 
 from loguru import logger
 
-from ..models.responses import OperationResult, SpackBuildInfo, SpackPackage
+from ..config import get_settings
+from ..models.responses import OperationResult, SpackPackage, SpackVariant, SpackVersionInfo
 
 
 class SpackService:
     """Service for interacting with Spack package manager."""
 
-    def __init__(self, spack_root: str = "/opt/spack"):
+    def __init__(self, spack_executable: str | None = None):
         """
         Initialize Spack service.
 
         Args:
-            spack_root: Path to spack installation
+            spack_executable: Path to spack executable
         """
-        self.spack_root = Path(spack_root)
-        self.spack_cmd = self.spack_root / "bin" / "spack"
-        logger.info("Initialized SpackService", spack_root=spack_root)
+        if spack_executable is None:
+            settings = get_settings()
+            spack_executable = settings.spack_executable
+
+        self.spack_cmd = Path(spack_executable)
+        logger.info("Initialized SpackService", spack_executable=str(self.spack_cmd))
 
     async def _run_command(
         self,
@@ -131,8 +135,13 @@ class SpackService:
                         name=line,
                         version="latest",
                         description=f"Spack package: {line}",
-                        homepage="",
+                        homepage=None,
                         variants=[],
+                        dependencies=[],
+                        build_dependencies=[],
+                        link_dependencies=[],
+                        run_dependencies=[],
+                        licenses=[],
                     )
                 )
 
@@ -189,62 +198,6 @@ class SpackService:
             },
         )
 
-    async def get_build_info(
-        self,
-        package_name: str,
-        version: str | None = None,
-    ) -> SpackBuildInfo:
-        """
-        Get build information for a spack package.
-
-        Args:
-            package_name: Package name
-            version: Package version
-
-        Returns:
-            Build information
-        """
-        spec = package_name
-        if version:
-            spec += f"@{version}"
-
-        logger.info("Getting build info", package=spec)
-
-        cmd = [str(self.spack_cmd), "info", spec]
-        result = await self._run_command(cmd)
-
-        if not result["success"]:
-            logger.error("Failed to get build info", package=spec, error=result["stderr"])
-            return SpackBuildInfo(
-                package_name=package_name,
-                version=version or "unknown",
-                build_system="unknown",
-                dependencies=[],
-                build_flags={},
-                install_path=None,
-            )
-
-        # Parse the info output (simplified)
-        lines = result["stdout"].split("\n")
-        dependencies = []
-        variants = []
-
-        for line in lines:
-            line = line.strip()
-            if "depends_on" in line:
-                dependencies.append(line)
-            elif "variant" in line:
-                variants.append(line)
-
-        return SpackBuildInfo(
-            package_name=package_name,
-            version=version or "latest",
-            build_system="unknown",
-            dependencies=dependencies,
-            build_flags={"variants": variants},
-            install_path=None,
-        )
-
     async def uninstall_package(
         self,
         package_name: str,
@@ -288,14 +241,14 @@ class SpackService:
         version: str | None = None,
     ) -> SpackPackage:
         """
-        Get detailed package information.
+        Get comprehensive package information including dependencies and build details.
 
         Args:
             package_name: Package name
             version: Package version
 
         Returns:
-            Package information
+            Complete package information
         """
         spec = package_name
         if version:
@@ -314,61 +267,213 @@ class SpackService:
                 description="Package information unavailable",
                 homepage="",
                 variants=[],
+                dependencies=[],
             )
 
-        # Parse the info output (simplified)
+        # Parse the comprehensive info output
         lines = result["stdout"].split("\n")
+        package_type = ""
         description = ""
         homepage = ""
-        dependencies = []
+        preferred_version = None
+        safe_versions = []
+        deprecated_versions = []
         variants = []
+        build_dependencies = []
+        link_dependencies = []
+        run_dependencies = []
+        licenses = []
+        all_dependencies = []  # For backward compatibility
 
-        for line in lines:
-            line = line.strip()
-            if line.startswith("Description:"):
+        multiline_description = ""
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Package type (first line, e.g., "PythonPackage:   py-pandas")
+            if i == 0 and ":" in line and not line.startswith(" "):
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    package_type = parts[0].strip()
+
+            # Description section (can be multiline)
+            elif line.startswith("Description:"):
                 description = line.replace("Description:", "").strip()
+                # Check for multiline description
+                i += 1
+                excluded_starts = ("Homepage:", "Preferred version:", "Safe versions:")
+                while (
+                    i < len(lines) and lines[i].startswith("    ") and not lines[i].strip().startswith(excluded_starts)
+                ):
+                    multiline_description += " " + lines[i].strip()
+                    i += 1
+                i -= 1  # Back up one since the loop will increment
+                if multiline_description:
+                    description += multiline_description
+
+            # Homepage
             elif line.startswith("Homepage:"):
                 homepage = line.replace("Homepage:", "").strip()
-            elif "depends_on" in line:
-                dependencies.append(line)
-            elif "variant" in line:
-                variants.append(line)
+
+            # Preferred version
+            elif line.startswith("Preferred version:"):
+                i += 1
+                if i < len(lines):
+                    version_line = lines[i].strip()
+                    if version_line:
+                        parts = version_line.split()
+                        if len(parts) >= 2:
+                            preferred_version = SpackVersionInfo(
+                                version=parts[0], url=parts[1] if len(parts) > 1 else None
+                            )
+
+            # Safe versions
+            elif line.startswith("Safe versions:"):
+                i += 1
+                while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
+                    version_line = lines[i].strip()
+                    if version_line and not version_line.startswith(("Deprecated versions:", "Variants:")):
+                        parts = version_line.split()
+                        if len(parts) >= 2:
+                            safe_versions.append(
+                                SpackVersionInfo(version=parts[0], url=parts[1] if len(parts) > 1 else None)
+                            )
+                    i += 1
+                i -= 1
+
+            # Deprecated versions
+            elif line.startswith("Deprecated versions:"):
+                i += 1
+                while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
+                    version_line = lines[i].strip()
+                    if version_line and version_line != "None":
+                        parts = version_line.split()
+                        if len(parts) >= 2:
+                            deprecated_versions.append(
+                                SpackVersionInfo(version=parts[0], url=parts[1] if len(parts) > 1 else None)
+                            )
+                    i += 1
+                i -= 1
+
+            # Variants section
+            elif line.startswith("Variants:"):
+                i += 1
+                current_variant = None
+                while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
+                    variant_line = lines[i].strip()
+                    if not variant_line:
+                        i += 1
+                        continue
+
+                    if variant_line.startswith("when @"):
+                        # Handle conditional variants
+                        if current_variant:
+                            current_variant.conditional = variant_line
+                    elif "[" in variant_line and "]" in variant_line:
+                        # New variant definition
+                        if current_variant:
+                            variants.append(current_variant)
+
+                        # Parse variant: name [default] values description
+                        bracket_start = variant_line.find("[")
+                        bracket_end = variant_line.find("]")
+
+                        if bracket_start > 0 and bracket_end > bracket_start:
+                            variant_name = variant_line[:bracket_start].strip()
+                            default_val = variant_line[bracket_start + 1 : bracket_end].strip()
+                            remaining = variant_line[bracket_end + 1 :].strip()
+
+                            # Parse possible values and description
+                            values = []
+                            description_part = ""
+                            if remaining:
+                                # Look for comma-separated values
+                                if "," in remaining:
+                                    values = [v.strip() for v in remaining.split(",")]
+                                else:
+                                    # Single value or description
+                                    values = [remaining] if remaining and not remaining[0].isupper() else []
+                                    description_part = remaining if remaining and remaining[0].isupper() else ""
+
+                            current_variant = SpackVariant(
+                                name=variant_name, default=default_val, values=values, description=description_part
+                            )
+                    i += 1
+
+                # Add the last variant
+                if current_variant:
+                    variants.append(current_variant)
+                i -= 1
+
+            # Build Dependencies
+            elif line.startswith("Build Dependencies:"):
+                i += 1
+                while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
+                    deps_line = lines[i].strip()
+                    if deps_line and deps_line != "None":
+                        # Split by whitespace to get individual dependencies
+                        deps = deps_line.split()
+                        build_dependencies.extend(deps)
+                        all_dependencies.extend(deps)
+                    i += 1
+                i -= 1
+
+            # Link Dependencies
+            elif line.startswith("Link Dependencies:"):
+                i += 1
+                while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
+                    deps_line = lines[i].strip()
+                    if deps_line and deps_line != "None":
+                        deps = deps_line.split()
+                        link_dependencies.extend(deps)
+                        all_dependencies.extend(deps)
+                    i += 1
+                i -= 1
+
+            # Run Dependencies
+            elif line.startswith("Run Dependencies:"):
+                i += 1
+                while i < len(lines) and (lines[i].startswith("    ") or not lines[i].strip()):
+                    deps_line = lines[i].strip()
+                    if deps_line and deps_line != "None":
+                        deps = deps_line.split()
+                        run_dependencies.extend(deps)
+                        all_dependencies.extend(deps)
+                    i += 1
+                i -= 1
+
+            # Licenses
+            elif line.startswith("Licenses:"):
+                license_line = line.replace("Licenses:", "").strip()
+                if license_line and license_line != "None":
+                    licenses = [license_line]
+                else:
+                    # License on next line
+                    i += 1
+                    if i < len(lines):
+                        next_line = lines[i].strip()
+                        if next_line and next_line != "None":
+                            licenses = [next_line]
+
+            i += 1
 
         return SpackPackage(
             name=package_name,
             version=version or "latest",
+            package_type=package_type or None,
             description=description or f"Spack package: {package_name}",
-            homepage=homepage,
+            homepage=homepage or None,
+            preferred_version=preferred_version,
+            safe_versions=safe_versions,
+            deprecated_versions=deprecated_versions,
             variants=variants,
+            build_dependencies=build_dependencies,
+            link_dependencies=link_dependencies,
+            run_dependencies=run_dependencies,
+            licenses=licenses,
+            dependencies=list(set(all_dependencies)),  # Remove duplicates for backward compatibility
         )
-
-    async def list_compilers(self) -> dict[str, Any]:
-        """
-        List available compilers.
-
-        Returns:
-            List of compiler information
-        """
-        logger.info("Listing compilers")
-
-        cmd = [str(self.spack_cmd), "compiler", "list"]
-        result = await self._run_command(cmd)
-
-        if not result["success"]:
-            logger.error("Failed to list compilers", error=result["stderr"])
-            return {"compilers": [], "error": result["stderr"]}
-
-        # Parse compiler output (simplified)
-        compilers = []
-        lines = result["stdout"].split("\n")
-
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith("=") and not line.startswith("--"):
-                compilers.append(line)
-
-        logger.info("Found compilers", count=len(compilers))
-        return {"compilers": compilers}
 
 
 # Global service instance
@@ -379,5 +484,6 @@ def get_spack_service() -> SpackService:
     """Get the global spack service instance."""
     global _spack_service
     if _spack_service is None:
-        _spack_service = SpackService()
+        settings = get_settings()
+        _spack_service = SpackService(spack_executable=settings.spack_executable)
     return _spack_service

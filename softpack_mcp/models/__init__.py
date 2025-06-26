@@ -15,6 +15,9 @@ __all__ = [
     "SoftpackEnvironment",
     "SoftpackPackage",
     "SpackPackage",
+    "SpackVariant",
+    "SpackVersionInfo",
+    "SpackDependencyInfo",
     "BuildInfo",
     "OperationResult",
 ]

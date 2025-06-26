@@ -2,7 +2,6 @@
 Request models for the Softpack MCP Server.
 """
 
-
 from pydantic import BaseModel, Field
 
 
@@ -14,13 +13,6 @@ class SpackInstallRequest(BaseModel):
     version: str | None = Field(None, description="Specific version to install")
     variants: list[str] | None = Field(default_factory=list, description="Package variants")
     dependencies: list[str] | None = Field(default_factory=list, description="Additional dependencies")
-
-
-class SpackBuildInfoRequest(BaseModel):
-    """Request to get build information for a spack package."""
-
-    package_name: str = Field(..., description="Name of the package")
-    version: str | None = Field(None, description="Specific version")
 
 
 class SpackSearchRequest(BaseModel):

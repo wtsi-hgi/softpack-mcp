@@ -2,19 +2,15 @@
 Spack MCP tools.
 """
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 
 from ..models.requests import (
-    SpackBuildInfoRequest,
     SpackInstallRequest,
     SpackSearchRequest,
 )
 from ..models.responses import (
     OperationResult,
-    SpackBuildInfo,
     SpackInstallResult,
     SpackPackage,
     SpackSearchResult,
@@ -24,7 +20,7 @@ from ..services.spack_service import SpackService, get_spack_service
 router = APIRouter()
 
 
-@router.get("/packages", response_model=SpackSearchResult)
+@router.get("/packages", response_model=SpackSearchResult, operation_id="list_packages")
 async def list_packages(
     query: str = Query("", description="Search query for packages"),
     limit: int = Query(10, description="Maximum number of packages to return"),
@@ -42,13 +38,13 @@ async def list_packages(
     """
     try:
         packages = await spack.search_packages(query=query, limit=limit)
-        return SpackSearchResult(packages=packages, total_count=len(packages), query=query)
+        return SpackSearchResult(packages=packages, total=len(packages), query=query)
     except Exception as e:
         logger.error("Failed to list packages", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/search", response_model=SpackSearchResult)
+@router.post("/search", response_model=SpackSearchResult, operation_id="search_packages")
 async def search_packages(
     request: SpackSearchRequest, spack: SpackService = Depends(get_spack_service)
 ) -> SpackSearchResult:
@@ -63,13 +59,13 @@ async def search_packages(
     """
     try:
         packages = await spack.search_packages(query=request.query, limit=request.limit)
-        return SpackSearchResult(packages=packages, total_count=len(packages), query=request.query)
+        return SpackSearchResult(packages=packages, total=len(packages), query=request.query)
     except Exception as e:
         logger.error("Failed to search packages", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/install", response_model=SpackInstallResult)
+@router.post("/install", response_model=SpackInstallResult, operation_id="install_package")
 async def install_package(
     request: SpackInstallRequest, spack: SpackService = Depends(get_spack_service)
 ) -> SpackInstallResult:
@@ -107,37 +103,7 @@ async def install_package(
         )
 
 
-@router.post("/build-info", response_model=SpackBuildInfo)
-async def get_build_info(
-    request: SpackBuildInfoRequest, spack: SpackService = Depends(get_spack_service)
-) -> SpackBuildInfo:
-    """
-    Get build information for a spack package.
-
-    Args:
-        request: Build info request parameters
-
-    Returns:
-        Detailed build information for the package.
-    """
-    try:
-        build_info = await spack.get_build_info(package_name=request.package_name, version=request.version)
-        if not build_info:
-            raise HTTPException(status_code=404, detail=f"Build info not found for package '{request.package_name}'")
-        return SpackBuildInfo(
-            package_name=request.package_name,
-            version=request.version or "latest",
-            build_system=build_info.build_system,
-            dependencies=build_info.dependencies,
-            build_flags=build_info.build_flags,
-            install_path=build_info.install_path,
-        )
-    except Exception as e:
-        logger.error("Failed to get build info", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/packages/{package_name}", response_model=OperationResult)
+@router.delete("/packages/{package_name}", response_model=OperationResult, operation_id="uninstall_package")
 async def uninstall_package(
     package_name: str,
     version: str | None = Query(None, description="Package version"),
@@ -167,21 +133,23 @@ async def uninstall_package(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/packages/{package_name}", response_model=SpackPackage)
+@router.get("/packages/{package_name}", response_model=SpackPackage, operation_id="get_package_info")
 async def get_package_info(
     package_name: str,
     version: str | None = Query(None, description="Package version"),
     spack: SpackService = Depends(get_spack_service),
 ) -> SpackPackage:
     """
-    Get detailed information about a spack package.
+    Get comprehensive information about a spack package.
+
+    Includes description, homepage, variants, dependencies, and other details.
 
     Args:
         package_name: Name of the package
         version: Optional package version
 
     Returns:
-        Detailed package information.
+        Comprehensive package information including build details.
     """
     try:
         package_info = await spack.get_package_info(package_name=package_name, version=version)
@@ -190,19 +158,4 @@ async def get_package_info(
         return package_info
     except Exception as e:
         logger.error("Failed to get package info", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/compilers", response_model=dict[str, Any])
-async def list_compilers(spack: SpackService = Depends(get_spack_service)) -> dict[str, Any]:
-    """
-    List available compilers.
-
-    Returns:
-        Dictionary containing available compilers.
-    """
-    try:
-        return await spack.list_compilers()
-    except Exception as e:
-        logger.error("Failed to list compilers", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

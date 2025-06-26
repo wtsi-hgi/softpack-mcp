@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi_mcp import FastApiMCP
 from loguru import logger
 
 from .config import get_settings
@@ -52,9 +53,9 @@ def create_app() -> FastAPI:
     setup_exception_handlers(app)
 
     # Include routers
-    app.include_router(spack_router, prefix="/api/v1/spack", tags=["spack"])
+    app.include_router(spack_router, prefix="/spack", tags=["spack"])
 
-    @app.get("/health")
+    @app.get("/health", operation_id="health_check")
     async def health_check():
         """Health check endpoint."""
         return {"status": "healthy", "service": "softpack-mcp"}
@@ -64,3 +65,7 @@ def create_app() -> FastAPI:
 
 # Application instance
 app = create_app()
+
+# create and mount the mcp server
+mcp_server = FastApiMCP(app)
+mcp_server.mount()
