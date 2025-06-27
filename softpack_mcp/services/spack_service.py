@@ -179,7 +179,7 @@ class SpackService:
 
         cmd = [str(self.spack_cmd), "install", spec]
 
-        result = await self._run_command(cmd, timeout=1800)  # 30 minutes timeout
+        result = await self._run_command(cmd, timeout=43200)  # 12 hours timeout
 
         if result["success"]:
             logger.success("Package installed successfully", package=spec)
