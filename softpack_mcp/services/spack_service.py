@@ -323,7 +323,7 @@ class SpackService:
                     version_line = lines[i].strip()
                     if version_line:
                         parts = version_line.split()
-                        if len(parts) >= 2:
+                        if len(parts) >= 1:
                             preferred_version = SpackVersionInfo(
                                 version=parts[0], url=parts[1] if len(parts) > 1 else None
                             )
@@ -335,7 +335,7 @@ class SpackService:
                     version_line = lines[i].strip()
                     if version_line and not version_line.startswith(("Deprecated versions:", "Variants:")):
                         parts = version_line.split()
-                        if len(parts) >= 2:
+                        if len(parts) >= 1:
                             safe_versions.append(
                                 SpackVersionInfo(version=parts[0], url=parts[1] if len(parts) > 1 else None)
                             )
@@ -349,7 +349,7 @@ class SpackService:
                     version_line = lines[i].strip()
                     if version_line and version_line != "None":
                         parts = version_line.split()
-                        if len(parts) >= 2:
+                        if len(parts) >= 1:
                             deprecated_versions.append(
                                 SpackVersionInfo(version=parts[0], url=parts[1] if len(parts) > 1 else None)
                             )

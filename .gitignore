@@ -11,3 +11,13 @@ wheels/
 
 # Environment variables
 .env
+
+# Log files
+*.log
+logs/
+
+# Coverage files
+.coverage
+htmlcov/
+.pytest_cache/
+.coverage.*
