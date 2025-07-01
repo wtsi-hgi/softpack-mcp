@@ -20,10 +20,7 @@ init:
 	mkdir -p data logs
 	@echo "📄 Creating .env file if it doesn't exist..."
 	@if [ ! -f .env ]; then \
-		echo "HOST=0.0.0.0" > .env; \
-		echo "PORT=8000" >> .env; \
-		echo "DEBUG=true" >> .env; \
-		echo "LOG_LEVEL=debug" >> .env; \
+		cp .env.example .env; \
 		echo "✅ Created .env file with default values"; \
 	else \
 		echo "ℹ️  .env file already exists"; \
