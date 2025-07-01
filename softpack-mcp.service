@@ -1,0 +1,13 @@
+[Unit]
+Description=SoftPack MCP Server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/make prod
+Restart=always
+User=ubuntu
+WorkingDirectory=/home/ubuntu/softpack-mcp
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin:/usr/local/bin
+
+[Install]
+WantedBy=multi-user.target
