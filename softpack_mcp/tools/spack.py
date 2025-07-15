@@ -2,16 +2,25 @@
 Spack MCP tools.
 """
 
+import json
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from ..models.requests import (
+    SpackCopyPackageRequest,
+    SpackCreatePypiRequest,
     SpackInstallRequest,
     SpackSearchRequest,
 )
 from ..models.responses import (
     OperationResult,
+    SpackCopyPackageResult,
+    SpackCreatePypiResult,
     SpackInstallResult,
+    SpackInstallStreamResult,
     SpackPackage,
     SpackSearchResult,
 )
@@ -24,6 +33,7 @@ router = APIRouter()
 async def list_packages(
     query: str = Query("", description="Search query for packages"),
     limit: int = Query(10, description="Maximum number of packages to return"),
+    session_id: str = Query(None, description="Session ID for isolated execution"),
     spack: SpackService = Depends(get_spack_service),
 ) -> SpackSearchResult:
     """
@@ -32,12 +42,13 @@ async def list_packages(
     Args:
         query: Search query to filter packages
         limit: Maximum number of packages to return
+        session_id: Session ID for isolated execution
 
     Returns:
         List of spack packages matching the query.
     """
     try:
-        packages = await spack.search_packages(query=query, limit=limit)
+        packages = await spack.search_packages(query=query, limit=limit, session_id=session_id)
         return SpackSearchResult(packages=packages, total=len(packages), query=query)
     except Exception as e:
         logger.error("Failed to list packages", error=str(e))
@@ -58,7 +69,7 @@ async def search_packages(
         List of packages matching the search criteria.
     """
     try:
-        packages = await spack.search_packages(query=request.query, limit=request.limit)
+        packages = await spack.search_packages(query=request.query, limit=request.limit, session_id=request.session_id)
         return SpackSearchResult(packages=packages, total=len(packages), query=request.query)
     except Exception as e:
         logger.error("Failed to search packages", error=str(e))
@@ -84,6 +95,7 @@ async def install_package(
             version=request.version,
             variants=request.variants,
             dependencies=request.dependencies,
+            session_id=request.session_id,
         )
         return SpackInstallResult(
             success=result.success,
@@ -103,11 +115,61 @@ async def install_package(
         )
 
 
+@router.post("/install/stream", operation_id="install_package_stream")
+async def install_package_stream(
+    request: SpackInstallRequest, spack: SpackService = Depends(get_spack_service)
+) -> StreamingResponse:
+    """
+    Install a spack package with streaming output.
+
+    Args:
+        request: Package installation parameters
+
+    Returns:
+        Server-Sent Events stream of installation progress.
+    """
+
+    async def generate_stream():
+        try:
+            async for result in spack.install_package_stream(
+                package_name=request.package_name,
+                version=request.version,
+                variants=request.variants,
+                dependencies=request.dependencies,
+                session_id=request.session_id,
+            ):
+                # Convert to JSON and send as SSE
+                data = json.dumps(result.model_dump())
+                yield f"data: {data}\n\n"
+        except Exception as e:
+            logger.exception("Failed to stream package installation", package=request.package_name, error=str(e))
+            error_result = SpackInstallStreamResult(
+                type="error",
+                data=f"Installation failed: {str(e)}",
+                timestamp=time.time(),
+                package_name=request.package_name,
+                version=request.version,
+            )
+            data = json.dumps(error_result.model_dump())
+            yield f"data: {data}\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+        },
+    )
+
+
 @router.delete("/packages/{package_name}", response_model=OperationResult, operation_id="uninstall_package")
 async def uninstall_package(
     package_name: str,
     version: str | None = Query(None, description="Package version"),
     force: bool = Query(False, description="Force uninstallation"),
+    session_id: str = Query(None, description="Session ID for isolated execution"),
     spack: SpackService = Depends(get_spack_service),
 ) -> OperationResult:
     """
@@ -117,12 +179,15 @@ async def uninstall_package(
         package_name: Package name to uninstall
         version: Optional package version
         force: Force uninstallation even if other packages depend on it
+        session_id: Session ID for isolated execution
 
     Returns:
         Operation result with uninstallation status.
     """
     try:
-        result = await spack.uninstall_package(package_name=package_name, version=version, force=force)
+        result = await spack.uninstall_package(
+            package_name=package_name, version=version, force=force, session_id=session_id
+        )
         spec = package_name
         if version:
             spec += f"@{version}"
@@ -137,6 +202,7 @@ async def uninstall_package(
 async def get_package_info(
     package_name: str,
     version: str | None = Query(None, description="Package version"),
+    session_id: str = Query(None, description="Session ID for isolated execution"),
     spack: SpackService = Depends(get_spack_service),
 ) -> SpackPackage:
     """
@@ -147,15 +213,83 @@ async def get_package_info(
     Args:
         package_name: Name of the package
         version: Optional package version
+        session_id: Session ID for isolated execution
 
     Returns:
         Comprehensive package information including build details.
     """
     try:
-        package_info = await spack.get_package_info(package_name=package_name, version=version)
+        package_info = await spack.get_package_info(package_name=package_name, version=version, session_id=session_id)
         if not package_info:
             raise HTTPException(status_code=404, detail=f"Package '{package_name}' not found")
         return package_info
     except Exception as e:
         logger.error("Failed to get package info", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/create-pypi", response_model=SpackCreatePypiResult, operation_id="create_pypi_package")
+async def create_pypi_package(
+    request: SpackCreatePypiRequest, spack: SpackService = Depends(get_spack_service)
+) -> SpackCreatePypiResult:
+    """
+    Create a PyPI package using PyPackageCreator.
+
+    This endpoint executes the following workflow:
+    1. cd ~/r-spack-recipe-builder
+    2. ./PyPackageCreator.py -f {package_name}
+    3. mv ~/r-spack-recipe-builder/packages/py-* /tmp/{session_uuid}/packages/ (if session_id provided)
+
+    Args:
+        request: PyPI package creation parameters
+
+    Returns:
+        Creation result with status and details.
+    """
+    try:
+        result = await spack.create_pypi_package(
+            package_name=request.package_name,
+            session_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Failed to create PyPI package", package=request.package_name, error=str(e))
+        return SpackCreatePypiResult(
+            success=False,
+            message=f"PyPI package creation failed: {str(e)}",
+            package_name=request.package_name,
+            creation_details={"error": str(e)},
+        )
+
+
+@router.post("/copy-package", response_model=SpackCopyPackageResult, operation_id="copy_existing_package")
+async def copy_existing_package(
+    request: SpackCopyPackageRequest, spack: SpackService = Depends(get_spack_service)
+) -> SpackCopyPackageResult:
+    """
+    Copy an existing spack package without using spack create.
+
+    This endpoint mimics the create() function from .zshrc but skips the spack create step.
+    It copies an existing package from the builtin packages to the session directory and
+    applies the same modifications as the shell function.
+
+    Args:
+        request: Package copy parameters
+
+    Returns:
+        Copy result with status and details.
+    """
+    try:
+        result = await spack.copy_existing_package(
+            package_name=request.package_name,
+            session_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Failed to copy package", package=request.package_name, error=str(e))
+        return SpackCopyPackageResult(
+            success=False,
+            message=f"Package copy failed: {str(e)}",
+            package_name=request.package_name,
+            copy_details={"error": str(e)},
+        )

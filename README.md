@@ -19,9 +19,11 @@ The server exposes the following tools to LLMs:
 ### Spack Package Management
 - `search_packages` - Search for available spack packages
 - `install_package` - Install a spack package with variants
+- `install_package_stream` - **NEW!** Install a spack package with real-time streaming output
 - `list_packages` - List installed packages
 - `get_package_info` - Get comprehensive package information (includes dependencies, variants, build details)
 - `uninstall_package` - Remove installed packages
+- `copy_existing_package` - **NEW!** Copy existing spack packages from builtin packages to session without using spack create
 
 ## Quick Start
 
@@ -92,6 +94,118 @@ This server implements the Model Context Protocol (MCP), allowing language model
 }
 ```
 
+## Streaming Installation
+
+The server now supports **real-time streaming** of spack installation progress using Server-Sent Events (SSE). This allows you to see installation progress as it happens, rather than waiting for completion.
+
+### Streaming Endpoint
+
+```
+POST /spack/install/stream
+```
+
+### Features
+
+- **Real-time Progress**: See installation output as it happens
+- **Event Types**: Different event types (start, output, error, complete)
+- **Timestamps**: Each event includes a timestamp
+- **Success Tracking**: Final event indicates installation success/failure
+
+### Example Usage
+
+```bash
+# Using curl
+curl -X POST "http://localhost:8000/spack/install/stream" \
+  -H "Content-Type: application/json" \
+  -d '{"package_name": "zlib", "version": "1.2.13"}' \
+  --no-buffer
+```
+
+### Example Client
+
+See `examples/streaming_client.py` for a complete Python client example.
+
+### Event Types
+
+- `start`: Installation started
+- `output`: Standard output from spack
+- `error`: Error output from spack
+- `complete`: Installation completed (with success status)
+
+### Benefits
+
+1. **Real-time Feedback**: No need to wait for completion to see progress
+2. **Better UX**: Users can see what's happening during long installations
+3. **Debugging**: Easier to identify where installations fail
+4. **Monitoring**: Can be used for monitoring and logging systems
+
+## Copy Existing Packages
+
+The server now supports **copying existing spack packages** from builtin packages to session directories without using `spack create`. This functionality mimics the `create()` function from the `.zshrc` file but skips the `spack create` step.
+
+### Copy Package Endpoint
+
+```
+POST /spack/copy-package
+```
+
+### Features
+
+- **Direct Copy**: Copies existing packages from builtin packages to session
+- **Legacy Spack Support**: Automatically checks out legacy spack commit `78f95ff38d591cbe956a726f4a93f57d21840f86` before copying packages
+- **Automatic Modifications**: Applies the same modifications as the shell function:
+  - Comments out `c`, `cxx`, and `fortran` build dependencies
+  - Removes `: EnvironmentModifications` from class definitions
+  - Removes `checked_by` from license lines
+  - Comments out `from spack_repo.builtin` imports
+- **Patch Files**: Automatically copies any `.patch` files
+- **Session Isolation**: Works within isolated session directories
+
+### Example Usage
+
+```bash
+# Using curl
+curl -X POST "http://localhost:8000/spack/copy-package" \
+  -H "Content-Type: application/json" \
+  -d '{"package_name": "zlib", "session_id": "your-session-id"}'
+```
+
+### Example Response
+
+```json
+{
+  "success": true,
+  "message": "Successfully copied package 'zlib' to session your-session-id",
+  "package_name": "zlib",
+  "source_path": "repos/spack_repo/builtin/packages/zlib",
+  "destination_path": "spack-repo/packages/zlib",
+  "recipe_path": "spack-repo/packages/zlib/package.py",
+  "copy_details": {
+    "patch_files": ["w_patch.patch", "configure-cc.patch"],
+          "legacy_commit": "78f95ff38d591cbe956a726f4a93f57d21840f86",
+      "git_checkout_success": true,
+      "modifications_applied": [
+        "commented_out_c_cxx_fortran_dependencies",
+        "removed_environment_modifications",
+        "removed_checked_by_from_licenses",
+        "commented_out_spack_repo_builtin_imports"
+      ]
+  }
+}
+```
+
+### Example Client
+
+See `examples/copy_package_example.py` for a complete Python client example.
+
+### Benefits
+
+1. **Faster Setup**: No need to run `spack create` for existing packages
+2. **Consistent Modifications**: Applies the same modifications as the shell function
+3. **Session Isolation**: Works within isolated session directories
+4. **Patch Preservation**: Automatically copies patch files
+5. **Error Handling**: Proper error handling for missing packages or sessions
+
 ## Development
 
 ### Setup Development Environment
@@ -140,6 +254,9 @@ softpack-mcp/
 │   └── utils/             # Utility modules
 │       ├── logging.py     # Logging configuration
 │       └── exceptions.py  # Custom exceptions
+├── examples/              # Example scripts and clients
+│   ├── streaming_client.py # Streaming installation example
+│   └── README.md          # Examples documentation
 ├── tests/                 # Test suite
 ├── pyproject.toml        # Project configuration
 └── README.md            # This file

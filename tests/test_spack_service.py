@@ -3,7 +3,7 @@ Tests for the SpackService.
 """
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -28,7 +28,7 @@ class TestSpackService:
             "success": True,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             packages = await spack_service.search_packages("test")
 
         assert len(packages) == 3
@@ -46,7 +46,7 @@ class TestSpackService:
             "success": False,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             packages = await spack_service.search_packages("test")
 
         assert packages == []
@@ -61,11 +61,43 @@ class TestSpackService:
             "success": True,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             result = await spack_service.install_package("test-package", version="1.0.0")
 
         assert result.success is True
         assert "Successfully installed test-package@1.0.0" in result.message
+
+    @pytest.mark.asyncio
+    async def test_install_package_stream(self, spack_service):
+        """Test streaming package installation."""
+        # Mock the subprocess creation
+        mock_process = AsyncMock()
+        mock_process.stdout.readline = AsyncMock(
+            side_effect=[
+                b"Installing package...\n",
+                b"Building dependencies...\n",
+                b"",  # End of stream
+            ]
+        )
+        mock_process.stderr.readline = AsyncMock(
+            side_effect=[
+                b"Warning: some warning\n",
+                b"",  # End of stream
+            ]
+        )
+        mock_process.wait = AsyncMock(return_value=0)
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            results = []
+            async for result in spack_service.install_package_stream("test-package", version="1.0.0"):
+                results.append(result)
+
+        # Should have start, output, error, and complete events
+        assert len(results) >= 4
+        assert results[0].type == "start"
+        assert results[0].data == "Starting installation of test-package@1.0.0"
+        assert results[-1].type == "complete"
+        assert results[-1].success is True
 
     @pytest.mark.asyncio
     async def test_get_package_info_with_version_only(self, spack_service):
@@ -111,7 +143,7 @@ Licenses:
             "success": True,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             package = await spack_service.get_package_info("dummy-test")
 
         # Test the fix: versions without URLs should be parsed correctly
@@ -175,7 +207,7 @@ Run Dependencies:
             "success": True,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             package = await spack_service.get_package_info("test-package")
 
         # Test versions with URLs
@@ -243,7 +275,7 @@ Licenses:
             "success": True,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             package = await spack_service.get_package_info("py-numpy")
 
         # Test complex variant parsing
@@ -275,7 +307,7 @@ Licenses:
             "success": False,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             package = await spack_service.get_package_info("nonexistent-package")
 
         assert package.name == "nonexistent-package"
@@ -291,7 +323,7 @@ Licenses:
             "success": True,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             result = await spack_service.uninstall_package("test-package")
 
         assert result is True
@@ -306,7 +338,7 @@ Licenses:
             "success": False,
         }
 
-        with patch.object(spack_service, "_run_command", return_value=mock_result):
+        with patch.object(spack_service, "_run_spack_command", return_value=mock_result):
             result = await spack_service.uninstall_package("nonexistent-package")
 
         assert result is False
@@ -315,7 +347,7 @@ Licenses:
     async def test_run_command_timeout(self, spack_service):
         """Test command timeout handling."""
         with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
-            result = await spack_service._run_command(["test", "command"], timeout=1)
+            result = await spack_service._run_command_base(["test", "command"], timeout=1)
 
         assert result["success"] is False
         assert result["returncode"] == -1
@@ -325,7 +357,7 @@ Licenses:
     async def test_run_command_exception(self, spack_service):
         """Test command execution exception handling."""
         with patch("asyncio.create_subprocess_exec", side_effect=Exception("Test error")):
-            result = await spack_service._run_command(["test", "command"])
+            result = await spack_service._run_command_base(["test", "command"])
 
         assert result["success"] is False
         assert result["returncode"] == -1

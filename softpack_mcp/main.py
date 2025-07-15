@@ -10,6 +10,8 @@ from fastapi_mcp import FastApiMCP
 from loguru import logger
 
 from .config import get_settings
+from .tools.recipes import router as recipes_router
+from .tools.sessions import router as sessions_router
 from .tools.spack import router as spack_router
 from .utils.exceptions import setup_exception_handlers
 from .utils.logging import setup_logging
@@ -54,6 +56,8 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(spack_router, prefix="/spack", tags=["spack"])
+    app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
+    app.include_router(recipes_router, prefix="/recipes", tags=["recipes"])
 
     @app.get("/health", operation_id="health_check")
     async def health_check():
