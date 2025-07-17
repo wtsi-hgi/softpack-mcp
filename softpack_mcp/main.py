@@ -10,6 +10,7 @@ from fastapi_mcp import FastApiMCP
 from loguru import logger
 
 from .config import get_settings
+from .tools.git import router as git_router
 from .tools.recipes import router as recipes_router
 from .tools.sessions import router as sessions_router
 from .tools.spack import router as spack_router
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(spack_router, prefix="/spack", tags=["spack"])
+    app.include_router(git_router, prefix="/git", tags=["git"])
     app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
     app.include_router(recipes_router, prefix="/recipes", tags=["recipes"])
 

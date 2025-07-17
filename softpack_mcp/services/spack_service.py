@@ -15,12 +15,17 @@ from loguru import logger
 from ..config import get_settings
 from ..models.responses import (
     OperationResult,
+    SpackChecksumResult,
     SpackCopyPackageResult,
+    SpackCreateFromUrlResult,
     SpackCreatePypiResult,
     SpackInstallStreamResult,
     SpackPackage,
+    SpackUninstallAllResult,
+    SpackValidationResult,
     SpackVariant,
     SpackVersionInfo,
+    SpackVersionsResult,
 )
 from .session_manager import get_session_manager
 
@@ -1019,6 +1024,361 @@ class SpackService:
             run_dependencies=run_dependencies,
             licenses=licenses,
             dependencies=list(set(all_dependencies)),  # Remove duplicates for backward compatibility
+        )
+
+    async def get_package_versions(
+        self,
+        package_name: str,
+        session_id: str | None = None,
+    ) -> SpackVersionsResult:
+        """
+        Get available versions for a spack package with checksum information.
+
+        Args:
+            package_name: Package name
+            session_id: Optional session ID for isolated execution
+
+        Returns:
+            Available versions result with checksum status
+        """
+        logger.info("Getting package versions with checksums", package=package_name, session_id=session_id)
+
+        # First get versions
+        cmd = [str(self.spack_cmd), "versions", package_name]
+        versions_result = await self._run_spack_command(cmd, session_id=session_id)
+
+        # If session execution fails with "package not found", try without session isolation
+        if not versions_result["success"] and session_id and "not found" in versions_result["stderr"]:
+            logger.info(
+                "Package not found in session for versions, retrying without session isolation",
+                package=package_name,
+                session_id=session_id,
+            )
+            versions_result = await self._run_spack_command(cmd, session_id=None)
+
+        if not versions_result["success"]:
+            logger.error("Failed to get package versions", package=package_name, error=versions_result["stderr"])
+            return SpackVersionsResult(
+                success=False,
+                message=f"Failed to get versions for {package_name}: {versions_result['stderr']}",
+                package_name=package_name,
+                versions=[],
+                version_info=[],
+                version_details={"error": versions_result["stderr"]},
+            )
+
+        # Parse versions from output
+        versions = []
+        lines = versions_result["stdout"].strip().split("\n")
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith("=") and not line.startswith("Safe") and not line.startswith("Deprecated"):
+                # Extract version numbers (skip URLs and other info)
+                parts = line.split()
+                if parts:
+                    version = parts[0]
+                    if version and not version.startswith("-"):
+                        versions.append(version)
+
+        # Now get checksums to see which versions have them
+        checksums_result = await self.get_package_checksums(package_name, session_id=session_id)
+        available_checksums = checksums_result.checksums if checksums_result.success else {}
+
+        # Create detailed version info
+        version_info = []
+        for version in versions:
+            has_checksum = version in available_checksums
+            checksum = available_checksums.get(version) if has_checksum else None
+
+            version_info.append(
+                SpackVersionInfo(
+                    version=version,
+                    url=None,  # URL not available from versions command
+                    has_checksum=has_checksum,
+                    checksum=checksum,
+                )
+            )
+
+        logger.success(
+            "Retrieved package versions with checksums",
+            package=package_name,
+            total_versions=len(versions),
+            checksummed_versions=len(available_checksums),
+        )
+
+        return SpackVersionsResult(
+            success=True,
+            message=f"Found {len(versions)} versions for {package_name} ({len(available_checksums)} with checksums)",
+            package_name=package_name,
+            versions=versions,  # Keep for backward compatibility
+            version_info=version_info,
+            version_details={
+                "stdout": versions_result["stdout"],
+                "stderr": versions_result["stderr"],
+                "checksums_available": len(available_checksums),
+                "total_versions": len(versions),
+            },
+        )
+
+    async def get_package_checksums(
+        self,
+        package_name: str,
+        session_id: str | None = None,
+    ) -> SpackChecksumResult:
+        """
+        Get checksums for a spack package.
+
+        Args:
+            package_name: Package name
+            session_id: Optional session ID for isolated execution
+
+        Returns:
+            Package checksums result
+        """
+        logger.info("Getting package checksums", package=package_name, session_id=session_id)
+
+        cmd = [str(self.spack_cmd), "checksum", "-b", package_name]
+        result = await self._run_spack_command(cmd, session_id=session_id, timeout=600)  # 10 minutes
+
+        # If session execution fails with "package not found", try without session isolation
+        # This handles the case where we need checksums for existing packages that aren't in the session yet
+        if not result["success"] and session_id and "not found" in result["stderr"]:
+            logger.info(
+                "Package not found in session, retrying without session isolation",
+                package=package_name,
+                session_id=session_id,
+            )
+            result = await self._run_spack_command(cmd, session_id=None, timeout=600)
+
+        if not result["success"]:
+            logger.error("Failed to get package checksums", package=package_name, error=result["stderr"])
+            return SpackChecksumResult(
+                success=False,
+                message=f"Failed to get checksums for {package_name}: {result['stderr']}",
+                package_name=package_name,
+                checksums={},
+                checksum_details={"error": result["stderr"]},
+            )
+
+        # Parse checksums from output
+        checksums = {}
+        lines = result["stdout"].strip().split("\n")
+        for line in lines:
+            line = line.strip()
+            # Look for version lines with checksums
+            if "version(" in line and "sha256=" in line:
+                # Extract version and checksum
+                try:
+                    version_start = line.find('"') + 1
+                    version_end = line.find('"', version_start)
+                    version = line[version_start:version_end]
+
+                    sha_start = line.find('sha256="') + 8
+                    sha_end = line.find('"', sha_start)
+                    checksum = line[sha_start:sha_end]
+
+                    if version and checksum:
+                        checksums[version] = checksum
+                except Exception:
+                    continue
+
+        logger.success("Retrieved package checksums", package=package_name, count=len(checksums))
+        return SpackChecksumResult(
+            success=True,
+            message=f"Found checksums for {len(checksums)} versions of {package_name}",
+            package_name=package_name,
+            checksums=checksums,
+            checksum_details={"stdout": result["stdout"], "stderr": result["stderr"]},
+        )
+
+    async def create_recipe_from_url(
+        self,
+        url: str,
+        session_id: str | None = None,
+    ) -> SpackCreateFromUrlResult:
+        """
+        Create a spack recipe from a URL.
+
+        Args:
+            url: URL to create recipe from
+            session_id: Optional session ID for isolated execution
+
+        Returns:
+            Recipe creation result
+        """
+        logger.info("Creating recipe from URL", url=url, session_id=session_id)
+
+        cmd = [str(self.spack_cmd), "create", "--skip-editor", "-b", url]
+
+        # Handle session-based execution
+        working_dir = None
+        if session_id:
+            session_manager = get_session_manager()
+            session_dir = session_manager.get_session_dir(session_id)
+            if session_dir:
+                working_dir = session_dir / "spack-repo"
+
+        result = await self._run_spack_command(cmd, cwd=working_dir, session_id=session_id, timeout=600)
+
+        if not result["success"]:
+            logger.error("Failed to create recipe from URL", url=url, error=result["stderr"])
+            return SpackCreateFromUrlResult(
+                success=False,
+                message=f"Failed to create recipe from {url}: {result['stderr']}",
+                url=url,
+                creation_details={"error": result["stderr"]},
+            )
+
+        # Try to extract package name from output
+        package_name = None
+        recipe_path = None
+        for line in result["stdout"].split("\n"):
+            if "Created package" in line or "package.py" in line:
+                # Try to extract package name
+                parts = line.split()
+                for part in parts:
+                    if part.endswith("package.py") or "packages/" in part:
+                        # Extract package name from path
+                        if "/" in part:
+                            package_name = part.split("/")[-2] if part.endswith("package.py") else part.split("/")[-1]
+                        break
+
+        if package_name and working_dir:
+            recipe_path = str((working_dir / "packages" / package_name / "package.py").relative_to(session_dir))
+
+        logger.success("Created recipe from URL", url=url, package_name=package_name)
+        return SpackCreateFromUrlResult(
+            success=True,
+            message=f"Successfully created recipe from {url}"
+            + (f" for package {package_name}" if package_name else ""),
+            url=url,
+            package_name=package_name,
+            recipe_path=recipe_path,
+            creation_details={"stdout": result["stdout"], "stderr": result["stderr"]},
+        )
+
+    async def validate_package(
+        self,
+        package_name: str,
+        package_type: str = "python",
+        hash_selection: str | None = None,
+        session_id: str | None = None,
+    ) -> SpackValidationResult:
+        """
+        Validate a spack package installation.
+
+        Args:
+            package_name: Package name to validate
+            package_type: Type of package (python, r, other)
+            hash_selection: Specific hash to use if multiple packages match
+            session_id: Optional session ID for isolated execution
+
+        Returns:
+            Package validation result
+        """
+        logger.info("Validating package", package=package_name, type=package_type, session_id=session_id)
+
+        # Build validation script based on package type
+        validation_scripts = {
+            "python": f'python -c "import {package_name}"',
+            "r": f'Rscript -e "library({package_name})"',
+            "other": "# Check package documentation for validation",
+        }
+        validation_script = validation_scripts.get(package_type, validation_scripts["other"])
+
+        # Build load command
+        if hash_selection:
+            load_spec = f"/{hash_selection}"
+        else:
+            # Determine recipe name based on package type
+            prefixes = {"python": "py-", "r": "r-", "other": ""}
+            recipe_name = prefixes[package_type] + package_name
+            load_spec = recipe_name
+
+        # Build singularity command
+        validation_command = (
+            f"singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c "
+            f"'source <(/opt/spack/bin/spack load --sh {load_spec}); {validation_script}'"
+        )
+
+        # Execute validation
+        cmd = ["bash", "-c", validation_command]
+        result = await self._run_command(cmd, timeout=300)
+
+        success = result["success"]
+        if success:
+            logger.success("Package validation successful", package=package_name)
+            message = f"Package {package_name} validation successful"
+        else:
+            logger.error("Package validation failed", package=package_name, error=result["stderr"])
+            message = f"Package {package_name} validation failed: {result['stderr']}"
+
+        return SpackValidationResult(
+            success=success,
+            message=message,
+            package_name=package_name,
+            package_type=package_type,
+            validation_command=validation_command,
+            validation_output=result["stdout"],
+            validation_details={
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+                "hash_selection": hash_selection,
+                "recipe_name": load_spec,
+            },
+        )
+
+    async def uninstall_package_with_dependents(
+        self,
+        package_name: str,
+        session_id: str | None = None,
+    ) -> SpackUninstallAllResult:
+        """
+        Uninstall a spack package and all its dependents.
+
+        Args:
+            package_name: Package name to uninstall
+            session_id: Optional session ID for isolated execution
+
+        Returns:
+            Uninstall result with details
+        """
+        logger.info("Uninstalling package with dependents", package=package_name, session_id=session_id)
+
+        cmd = [str(self.spack_cmd), "uninstall", "-y", "--all", "--dependents", package_name]
+        result = await self._run_spack_command(cmd, session_id=session_id, timeout=600)
+
+        if not result["success"]:
+            logger.error("Failed to uninstall package with dependents", package=package_name, error=result["stderr"])
+            return SpackUninstallAllResult(
+                success=False,
+                message=f"Failed to uninstall {package_name} and dependents: {result['stderr']}",
+                package_name=package_name,
+                uninstalled_packages=[],
+                uninstall_details={"error": result["stderr"]},
+            )
+
+        # Parse uninstalled packages from output
+        uninstalled_packages = []
+        for line in result["stdout"].split("\n"):
+            line = line.strip()
+            if "Removing" in line or "uninstalling" in line:
+                # Try to extract package name
+                parts = line.split()
+                for part in parts:
+                    if "@" in part or "/" in part:
+                        # Extract package name before @ or /
+                        pkg = part.split("@")[0].split("/")[-1]
+                        if pkg and pkg not in uninstalled_packages:
+                            uninstalled_packages.append(pkg)
+
+        logger.success("Uninstalled package with dependents", package=package_name, count=len(uninstalled_packages))
+        return SpackUninstallAllResult(
+            success=True,
+            message=f"Successfully uninstalled {package_name} and {len(uninstalled_packages)} dependent packages",
+            package_name=package_name,
+            uninstalled_packages=uninstalled_packages,
+            uninstall_details={"stdout": result["stdout"], "stderr": result["stderr"]},
         )
 
 

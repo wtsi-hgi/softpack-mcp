@@ -37,12 +37,6 @@ def _validate_package_name(package_name: str) -> None:
     if not package_name:
         raise HTTPException(status_code=400, detail="Package name cannot be empty")
 
-    # Basic validation - package names should be lowercase with hyphens/underscores
-    if not package_name.replace("-", "").replace("_", "").replace(".", "").isalnum():
-        raise HTTPException(
-            status_code=400, detail="Package name can only contain letters, numbers, hyphens, underscores, and dots"
-        )
-
 
 def _validate_python_syntax(content: str) -> tuple[bool, list[str]]:
     """Validate Python syntax of recipe content."""
@@ -78,7 +72,9 @@ def _validate_recipe_content(content: str, package_name: str) -> RecipeValidatio
                 if isinstance(node, ast.ClassDef):
                     class_found = True
                     # Check if class name matches package name pattern
-                    expected_class = package_name.replace("-", "_").replace(".", "_").title()
+                    # Convert package-name to PackageName (PascalCase, no hyphens/underscores)
+                    parts = package_name.replace("-", "_").replace(".", "_").split("_")
+                    expected_class = "".join(part.capitalize() for part in parts if part)
                     if node.name.lower() != expected_class.lower():
                         warnings.append(f"Class name '{node.name}' doesn't match expected pattern '{expected_class}'")
 

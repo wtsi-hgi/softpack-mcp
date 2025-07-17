@@ -1,0 +1,1750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spack Package Creation Wizard</title>
+    <script>
+        // Define the wizard app function before Alpine.js loads
+        window.wizardApp = function() {
+            return {
+                currentStep: 1,
+                totalSteps: 6,
+
+                // API Configuration
+                apiBaseUrl: 'http://softpack-builder-dev.hgi.sanger.ac.uk:8000',
+                sessionId: null,
+
+                // Package info
+                packageName: '',
+                packageType: 'python',
+                packageUrl: '',
+
+                // Workflow state
+                recipeExists: '',
+                recipeChecking: false,
+                needsSpecificVersion: '',
+                newVersion: '',
+                pypiSuccess: '',
+                foundInOfficial: '',
+                officialChecking: false,
+                hasReleases: '',
+                releaseUrl: '',
+                repoUrl: '',
+                buildSuccess: '',
+                validationSuccess: '',
+                hashSelection: '',
+                prUrl: '',
+
+                // API operation states
+                apiStates: {
+                    creatingSession: false,
+                    runningVersions: false,
+                    runningChecksum: false,
+                    creatingPypi: false,
+                    copyingPackage: false,
+                    creatingFromUrl: false,
+                    installingPackage: false,
+                    validatingPackage: false,
+                    uninstallingPackage: false,
+                    gettingCommitInfo: false,
+                    creatingPR: false,
+                    loadingRecipes: false,
+                    creatingRecipe: false,
+                    savingRecipe: false,
+                    validatingRecipe: false,
+                },
+
+                // Recipe editor state
+                selectedRecipe: null,
+                recipeContent: '',
+                validationResult: null,
+
+                // Installation output state
+                installOutput: [],
+
+                // API results
+                apiResults: {
+                    sessionInfo: null,
+                    versions: null,
+                    checksums: null,
+                    pypiResult: null,
+                    copyResult: null,
+                    urlResult: null,
+                    installResult: null,
+                    validationResult: null,
+                    uninstallResult: null,
+                    commitInfo: null,
+                    prResult: null,
+                    recipes: null,
+                    recipeCreateResult: null,
+                },
+
+                // Modifications
+                modifications: {
+                    dependencies: false,
+                    optional: false,
+                    patches: false,
+                    buildFlags: false,
+                    classType: false
+                },
+
+                getRecipeName() {
+                    const prefixes = { python: 'py-', r: 'r-', other: '' };
+                    return prefixes[this.packageType] + this.packageName;
+                },
+
+                getValidationScript() {
+                    const scripts = {
+                        python: `python -c "import ${this.packageName}"`,
+                        r: `Rscript -e "library(${this.packageName})"`,
+                        other: '# Check package documentation for validation'
+                    };
+                    return scripts[this.packageType];
+                },
+
+                canProceed() {
+                    switch(this.currentStep) {
+                        case 1: return this.packageName.trim() !== '';
+                        case 2: return this.recipeExists !== '' && this.recipeExists !== 'manual' && !this.recipeChecking;
+                        case 3:
+                            if (this.recipeExists === 'yes') {
+                                return this.needsSpecificVersion !== '';
+                            } else {
+                                if (this.packageType === 'python') {
+                                    return this.pypiSuccess !== '' &&
+                                           (this.pypiSuccess === 'yes' || this.foundInOfficial !== '');
+                                } else {
+                                    return this.foundInOfficial !== '' &&
+                                           (this.foundInOfficial === 'yes' || this.hasReleases !== '');
+                                }
+                            }
+                        case 4: return true; // Always can proceed from modifications
+                        case 5: return this.buildSuccess === 'yes' && this.validationSuccess === 'yes';
+                        case 6: return true;
+                        default: return false;
+                    }
+                },
+
+                async nextStep() {
+                    if (this.canProceed() && this.currentStep < this.totalSteps) {
+                        this.currentStep++;
+
+                        // Auto-check recipe existence when entering step 2
+                        if (this.currentStep === 2) {
+                            this.checkRecipeExists();
+                        }
+
+                        // Auto-check official recipe when entering step 3 for new recipes
+                        if (this.currentStep === 3 && this.recipeExists === 'no') {
+                            this.checkOfficialRecipe();
+                        }
+
+                        // Create/copy recipe to session when entering step 4 from existing recipe
+                        if (this.currentStep === 4 && this.recipeExists === 'yes') {
+                            try {
+                                await this.createRecipeInSession();
+                            } catch (error) {
+                                // If recipe creation fails, stay on current step
+                                this.currentStep--;
+                                return;
+                            }
+                        }
+
+                        // Auto-load recipes when entering step 4
+                        if (this.currentStep === 4) {
+                            this.loadRecipes();
+                        }
+
+                        // Skip step 3 version check if recipe doesn't exist or skip to step 4 if using existing
+                        if (this.currentStep === 3 && this.recipeExists === 'no') {
+                            // Stay at step 3 for new recipe creation
+                        } else if (this.currentStep === 3 && this.recipeExists === 'yes' && this.needsSpecificVersion === 'no') {
+                            this.currentStep = 4; // Skip to modifications
+                        } else if (this.currentStep === 4 && this.recipeExists === 'yes' && this.needsSpecificVersion === 'no') {
+                            this.currentStep = 5; // Skip to build
+                        }
+                    }
+                },
+
+                previousStep() {
+                    if (this.currentStep > 1) {
+                        this.currentStep--;
+                    }
+                },
+
+                async copyToClipboard(text) {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        // Could add a toast notification here
+                    } catch (err) {
+                        console.error('Failed to copy text: ', err);
+                    }
+                },
+
+                // API Helper Functions
+                async apiRequest(endpoint, method = 'GET', data = null) {
+                    const url = `${this.apiBaseUrl}${endpoint}`;
+                    const options = {
+                        method,
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    };
+
+                    if (data) {
+                        options.body = JSON.stringify(data);
+                    }
+
+                    try {
+                        const response = await fetch(url, options);
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        return await response.json();
+                    } catch (error) {
+                        console.error('API request failed:', error);
+                        throw error;
+                    }
+                },
+
+                async createSession() {
+                    if (this.sessionId) return;
+
+                    this.apiStates.creatingSession = true;
+                    try {
+                        // First, pull the latest updates from spack-repo
+                        console.log('Pulling latest spack-repo updates...');
+                        const pullResult = await this.apiRequest('/git/pull', 'POST', {});
+
+                        if (pullResult.success) {
+                            console.log('Spack-repo updated:', pullResult.message);
+                        } else {
+                            console.warn('Failed to update spack-repo, continuing anyway:', pullResult.message);
+                            // Don't fail the session creation if git pull fails
+                        }
+
+                        // Then create the session
+                        console.log('Creating session...');
+                        const result = await this.apiRequest('/sessions/create', 'POST');
+                        this.sessionId = result.session_id;
+                        this.apiResults.sessionInfo = result;
+                        this.apiResults.pullResult = pullResult;
+                        console.log('Session created:', this.sessionId);
+                    } catch (error) {
+                        console.error('Failed to create session:', error);
+                        alert('Failed to create session. Please try again.');
+                    } finally {
+                        this.apiStates.creatingSession = false;
+                    }
+                },
+
+                async ensureSession() {
+                    if (!this.sessionId) {
+                        await this.createSession();
+                    }
+                },
+
+                // Spack API Functions
+                async runSpackVersions() {
+                    await this.ensureSession();
+                    this.apiStates.runningVersions = true;
+                    try {
+                        const result = await this.apiRequest('/spack/versions', 'POST', {
+                            package_name: this.getRecipeName(),
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.versions = result;
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to get versions:', error);
+                        alert('Failed to get package versions. Please try again.');
+                    } finally {
+                        this.apiStates.runningVersions = false;
+                    }
+                },
+
+                getVersionsWithChecksumsDisplay() {
+                    if (!this.apiResults.versions?.version_info) return '';
+
+                    const versionInfo = this.apiResults.versions.version_info;
+                    const checksummed = versionInfo.filter(v => v.has_checksum).length;
+                    const total = versionInfo.length;
+
+                    return `${total} versions found (${checksummed} with checksums available)`;
+                },
+
+                getVersionsForDisplay() {
+                    if (!this.apiResults.versions?.version_info) {
+                        return this.apiResults.versions?.versions || [];
+                    }
+                    return this.apiResults.versions.version_info.map(v => v.version);
+                },
+
+                async runSpackChecksum() {
+                    await this.ensureSession();
+                    this.apiStates.runningChecksum = true;
+                    try {
+                        const result = await this.apiRequest('/spack/checksum', 'POST', {
+                            package_name: this.getRecipeName(),
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.checksums = result;
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to get checksums:', error);
+                        alert('Failed to get package checksums. Please try again.');
+                    } finally {
+                        this.apiStates.runningChecksum = false;
+                    }
+                },
+
+                async runPyPackageCreator() {
+                    await this.ensureSession();
+                    this.apiStates.creatingPypi = true;
+                    try {
+                        const result = await this.apiRequest('/spack/create-pypi', 'POST', {
+                            package_name: this.packageName,
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.pypiResult = result;
+                        this.pypiSuccess = result.success ? 'yes' : 'no';
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to create PyPI package:', error);
+                        this.pypiSuccess = 'no';
+                        alert('Failed to create PyPI package. Please try again.');
+                    } finally {
+                        this.apiStates.creatingPypi = false;
+                    }
+                },
+
+                async runCopyPackage() {
+                    await this.ensureSession();
+                    this.apiStates.copyingPackage = true;
+                    try {
+                        const result = await this.apiRequest('/spack/copy-package', 'POST', {
+                            package_name: this.packageName,
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.copyResult = result;
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to copy package:', error);
+                        alert('Failed to copy package. Please try again.');
+                    } finally {
+                        this.apiStates.copyingPackage = false;
+                    }
+                },
+
+                async runCreateFromUrl() {
+                    await this.ensureSession();
+                    this.apiStates.creatingFromUrl = true;
+                    try {
+                        const result = await this.apiRequest('/spack/create-from-url', 'POST', {
+                            url: this.releaseUrl,
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.urlResult = result;
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to create from URL:', error);
+                        alert('Failed to create recipe from URL. Please try again.');
+                    } finally {
+                        this.apiStates.creatingFromUrl = false;
+                    }
+                },
+
+                async runSpackInstall() {
+                    await this.ensureSession();
+                    this.apiStates.installingPackage = true;
+                    this.clearInstallOutput();
+
+                    try {
+                        const requestBody = {
+                            package_name: this.getRecipeName(),
+                            session_id: this.sessionId
+                        };
+
+                        const response = await fetch(`${this.apiBaseUrl}/spack/install/stream`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(requestBody)
+                        });
+
+                        if (response.ok) {
+                            const reader = response.body.getReader();
+                            const decoder = new TextDecoder();
+                            let installSuccess = false;
+
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+
+                                const chunk = decoder.decode(value);
+                                const lines = chunk.split('\n');
+
+                                for (const line of lines) {
+                                    if (line.startsWith('data: ')) {
+                                        try {
+                                            const data = JSON.parse(line.slice(6));
+                                            this.installOutput.push(data);
+
+                                            // Auto-scroll to bottom
+                                            this.$nextTick(() => {
+                                                const outputContainer = document.querySelector('.stream-output');
+                                                if (outputContainer) {
+                                                    outputContainer.scrollTop = outputContainer.scrollHeight;
+                                                }
+                                            });
+
+                                            // Check if installation completed successfully
+                                            if (data.type === 'complete' && data.data.includes('successfully')) {
+                                                installSuccess = true;
+                                            }
+                                        } catch (e) {
+                                            console.error('Failed to parse SSE data:', e);
+                                        }
+                                    }
+                                }
+                            }
+
+                            this.buildSuccess = installSuccess ? 'yes' : 'no';
+                            this.apiResults.installResult = {
+                                success: installSuccess,
+                                package_name: this.getRecipeName(),
+                                message: installSuccess ? 'Installation completed successfully' : 'Installation failed'
+                            };
+                        } else {
+                            throw new Error('Failed to start installation');
+                        }
+                    } catch (error) {
+                        console.error('Failed to install package:', error);
+                        this.buildSuccess = 'no';
+                        this.installOutput.push({
+                            type: 'error',
+                            data: `Installation failed: ${error.message}`,
+                            timestamp: Date.now() / 1000
+                        });
+                    } finally {
+                        this.apiStates.installingPackage = false;
+                    }
+                },
+
+                async runPackageValidation(hashSelection = null) {
+                    await this.ensureSession();
+                    this.apiStates.validatingPackage = true;
+                    try {
+                        const result = await this.apiRequest('/spack/validate', 'POST', {
+                            package_name: this.packageName,
+                            package_type: this.packageType,
+                            hash_selection: hashSelection,
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.validationResult = result;
+                        this.validationSuccess = result.success ? 'yes' : 'no';
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to validate package:', error);
+                        this.validationSuccess = 'no';
+                        alert('Failed to validate package. Please try again.');
+                    } finally {
+                        this.apiStates.validatingPackage = false;
+                    }
+                },
+
+                async runSpackUninstallAll() {
+                    await this.ensureSession();
+                    this.apiStates.uninstallingPackage = true;
+                    try {
+                        const result = await this.apiRequest('/spack/uninstall-all', 'POST', {
+                            package_name: this.getRecipeName(),
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.uninstallResult = result;
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to uninstall package:', error);
+                        alert('Failed to uninstall package. Please try again.');
+                    } finally {
+                        this.apiStates.uninstallingPackage = false;
+                    }
+                },
+
+                // Git API Functions
+                async runGetCommitInfo() {
+                    this.apiStates.gettingCommitInfo = true;
+                    try {
+                        const result = await this.apiRequest('/git/commit-info', 'POST', {
+                            repo_url: this.repoUrl,
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.commitInfo = result;
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to get commit info:', error);
+                        alert('Failed to get git commit info. Please try again.');
+                    } finally {
+                        this.apiStates.gettingCommitInfo = false;
+                    }
+                },
+
+                async runCreatePullRequest() {
+                    await this.ensureSession();
+                    this.apiStates.creatingPR = true;
+                    try {
+                        const result = await this.apiRequest('/git/pull-request', 'POST', {
+                            package_name: this.packageName,
+                            recipe_name: this.getRecipeName(),
+                            session_id: this.sessionId
+                        });
+                        this.apiResults.prResult = result;
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to create pull request:', error);
+                        alert('Failed to create pull request. Please try again.');
+                    } finally {
+                        this.apiStates.creatingPR = false;
+                    }
+                },
+
+                async loadRecipes() {
+                    await this.ensureSession();
+                    this.apiStates.loadingRecipes = true;
+                    try {
+                        const result = await this.apiRequest(`/recipes/${this.sessionId}`);
+                        this.apiResults.recipes = result.recipes;
+
+                        // Auto-select the current package's recipe if not already selected
+                        if (!this.selectedRecipe && this.packageName) {
+                            const currentRecipe = result.recipes.find(r => r.package_name === this.getRecipeName());
+                            if (currentRecipe) {
+                                await this.selectRecipe(currentRecipe);
+                            }
+                        }
+
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to load recipes:', error);
+                        alert('Failed to load recipes. Please try again.');
+                    } finally {
+                        this.apiStates.loadingRecipes = false;
+                    }
+                },
+
+                async createRecipeInSession() {
+                    await this.ensureSession();
+                    this.apiStates.creatingRecipe = true;
+                    try {
+                        const result = await this.apiRequest(`/recipes/${this.sessionId}/${this.getRecipeName()}/create`, 'POST');
+                        this.apiResults.recipeCreateResult = result;
+                        console.log('Recipe created/copied to session:', result);
+                        return result;
+                    } catch (error) {
+                        console.error('Failed to create recipe in session:', error);
+                        alert('Failed to create recipe in session. Please try again.');
+                        throw error;
+                    } finally {
+                        this.apiStates.creatingRecipe = false;
+                    }
+                },
+
+                async selectRecipe(recipe) {
+                    this.selectedRecipe = recipe;
+                    this.validationResult = null;
+
+                    if (recipe && recipe.exists) {
+                        try {
+                            const response = await this.apiRequest(`/recipes/${this.sessionId}/${recipe.package_name}`);
+                            this.recipeContent = response.content;
+                        } catch (error) {
+                            console.error('Failed to load recipe content:', error);
+                            alert('Failed to load recipe content. Please try again.');
+                        }
+                    } else {
+                        this.recipeContent = '';
+                    }
+                },
+
+                async validateRecipe() {
+                    if (!this.selectedRecipe || !this.recipeContent) return;
+
+                    this.apiStates.validatingRecipe = true;
+                    try {
+                        const response = await this.apiRequest(`/recipes/${this.sessionId}/${this.selectedRecipe.package_name}/validate`, 'POST', {
+                            content: this.recipeContent,
+                            package_name: this.selectedRecipe.package_name
+                        });
+
+                        this.validationResult = response;
+                    } catch (error) {
+                        console.error('Failed to validate recipe:', error);
+                        alert('Failed to validate recipe. Please try again.');
+                    } finally {
+                        this.apiStates.validatingRecipe = false;
+                    }
+                },
+
+                async saveRecipe() {
+                    if (!this.selectedRecipe || !this.recipeContent) return;
+
+                    this.apiStates.savingRecipe = true;
+                    try {
+                        await this.apiRequest(`/recipes/${this.sessionId}/${this.selectedRecipe.package_name}`, 'PUT', {
+                            content: this.recipeContent,
+                            description: `Updated by wizard at ${new Date().toISOString()}`
+                        });
+
+                        // Update the recipe in the list to reflect the save
+                        await this.loadRecipes();
+
+                        // Re-select the current recipe to maintain selection
+                        if (this.selectedRecipe) {
+                            const updatedRecipe = this.apiResults.recipes.find(r => r.package_name === this.selectedRecipe.package_name);
+                            if (updatedRecipe) {
+                                this.selectedRecipe = updatedRecipe;
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Failed to save recipe:', error);
+                        // Error handling is done through the UI state (button disabled, etc.)
+                    } finally {
+                        this.apiStates.savingRecipe = false;
+                    }
+                },
+
+                async checkRecipeExists() {
+                    if (!this.packageName.trim()) return;
+
+                    this.recipeChecking = true;
+                    const recipeName = this.getRecipeName();
+
+                    // Use GitHub's public API with proper headers
+                    const url = `https://api.github.com/repos/wtsi-hgi/spack-repo/contents/packages/${recipeName}/package.py`;
+
+                    try {
+                        const response = await fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': 'Spack-Package-Wizard'
+                            }
+                        });
+
+                        if (response.status === 200) {
+                            this.recipeExists = 'yes';
+                        } else if (response.status === 404) {
+                            this.recipeExists = 'no';
+                        } else {
+                            // For other status codes, default to no
+                            this.recipeExists = 'no';
+                        }
+                    } catch (error) {
+                        console.error('Error checking recipe existence:', error);
+                        // Fallback: show manual check option
+                        this.recipeExists = 'manual';
+                    } finally {
+                        this.recipeChecking = false;
+                    }
+                },
+
+                async checkOfficialRecipe() {
+                    if (!this.packageName.trim()) return;
+
+                    this.officialChecking = true;
+
+                    // Use GitHub's public API to check official Spack repository
+                    const url = `https://api.github.com/repos/spack/spack-packages/contents/repos/spack_repo/builtin/packages/${this.packageName}/package.py`;
+
+                    try {
+                        const response = await fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': 'Spack-Package-Wizard'
+                            }
+                        });
+
+                        if (response.status === 200) {
+                            this.foundInOfficial = 'yes';
+                        } else if (response.status === 404) {
+                            this.foundInOfficial = 'no';
+                        } else {
+                            // For other status codes, default to no
+                            this.foundInOfficial = 'no';
+                        }
+                    } catch (error) {
+                        console.error('Error checking official recipe existence:', error);
+                        // Fallback: default to no
+                        this.foundInOfficial = 'no';
+                    } finally {
+                        this.officialChecking = false;
+                    }
+                },
+
+                getValidationCommand() {
+                    return `singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c 'source <(/opt/spack/bin/spack load --sh ${this.getRecipeName()}); ${this.getValidationScript()}'`;
+                },
+
+                getValidationCommandWithSelection() {
+                    return `# Replace HASH with one of the hashes from the error message (e.g., /tkodior)
+singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c 'source <(/opt/spack/bin/spack load --sh /HASH); ${this.getValidationScript()}'`;
+                },
+
+                getPrCommands() {
+                    return `git checkout -b add-${this.packageName}-recipe
+git add .
+git commit -m "Add ${this.getRecipeName()} recipe"
+git push origin add-${this.packageName}-recipe`;
+                },
+
+                getCommitCommands() {
+                    return `spack create --skip-editor ${this.getRecipeName()}
+rm -rf /tmp/scratch
+git clone ${this.repoUrl} /tmp/scratch
+cd /tmp/scratch
+COMMIT=$(git log -1 --format='%H')
+DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')
+cd -
+echo "# Add to recipe at ~/spack-repo/packages/${this.getRecipeName()}/package.py"
+echo "version(\\"$DATE\\", commit=\\"$COMMIT\\")"`;
+                },
+
+                clearInstallOutput() {
+                    this.installOutput = [];
+                },
+
+                getOutputLineClass(line) {
+                    switch (line.type) {
+                        case 'start': return 'start-line';
+                        case 'error': return 'error-line';
+                        case 'complete': return 'complete-line';
+                        default: return 'output-line';
+                    }
+                },
+
+                getPyPackageCreatorCommand() {
+                    return `cd ~/r-spack-recipe-builder
+./PyPackageCreator.py -f ${this.packageName}`;
+                },
+
+                getVersionCommand() {
+                    if (this.newVersion && this.apiResults.checksums && this.apiResults.checksums.checksums && this.apiResults.checksums.checksums[this.newVersion]) {
+                        return `version("${this.newVersion}", sha256="${this.apiResults.checksums.checksums[this.newVersion]}")`;
+                    }
+                    return '';
+                }
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            background-color: #fafafa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: white;
+            color: #333;
+            padding: 40px 0;
+            margin-bottom: 40px;
+            border-bottom: 1px solid #e0e0e0;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-weight: 300;
+            font-size: 2.5rem;
+            margin: 0 0 10px 0;
+            letter-spacing: -0.5px;
+        }
+
+        .header p {
+            font-weight: 400;
+            color: #666;
+            margin: 0;
+            font-size: 1.1rem;
+        }
+
+        .wizard-container {
+            background: white;
+            padding: 60px;
+            max-width: 800px;
+            margin: 0 auto;
+            border: 1px solid #e0e0e0;
+        }
+
+        .progress-bar {
+            background: #f0f0f0;
+            height: 2px;
+            margin-bottom: 60px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            background: #333;
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+
+        .step {
+            display: none;
+        }
+
+        .step.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #666;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input[type="text"], input[type="url"], select, textarea {
+            width: 100%;
+            padding: 12px 0;
+            border: none;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 16px;
+            transition: border-color 0.2s ease;
+            box-sizing: border-box;
+            background: transparent;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-bottom-color: #333;
+        }
+
+        .btn {
+            background: #333;
+            color: white;
+            border: 1px solid #333;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            margin-right: 10px;
+        }
+
+        .btn:hover {
+            background: white;
+            color: #333;
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #333;
+            border-color: #ccc;
+        }
+
+        .btn-secondary:hover {
+            background: #f5f5f5;
+        }
+
+        .btn-success {
+            background: #28a745;
+            border-color: #28a745;
+        }
+
+        .btn-success:hover {
+            background: white;
+            color: #28a745;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+            border-color: #ffc107;
+        }
+
+        .btn-warning:hover {
+            background: white;
+        }
+
+        .command-box {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 14px;
+            margin: 20px 0;
+            position: relative;
+        }
+
+        .command-box span {
+            display: block;
+            padding-right: 80px;
+            line-height: 1.5;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #333;
+            color: white;
+            border: 1px solid #333;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .copy-btn:hover {
+            background: white;
+            color: #333;
+        }
+
+        .info-box {
+            background: #f8f9fa;
+            border-left: 4px solid #333;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .warning-box {
+            background: #fff8e1;
+            border-left: 4px solid #ffc107;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .success-box {
+            background: #f1f8e9;
+            border-left: 4px solid #28a745;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 10px 0;
+        }
+
+        .step-title {
+            color: #333;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+            font-weight: 500;
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 60px;
+            padding-top: 30px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .stream-output {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            max-height: 400px;
+            overflow-y: auto;
+            background: #1a1a1a;
+            color: #f0f0f0;
+            padding: 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+
+        .stream-output .output-line { color: #f0f0f0; }
+        .stream-output .error-line { color: #ff6b6b; }
+        .stream-output .start-line { color: #51cf66; font-weight: bold; }
+        .stream-output .complete-line { color: #51cf66; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Spack Package Creation Guide</h1>
+        <p>Step-by-step workflow for creating Spack packages</p>
+    </div>
+
+    <div class="wizard-container" x-data="wizardApp()">
+        <!-- Session Management -->
+        <div x-show="!sessionId" style="text-align: center; padding: 80px 40px;">
+            <h2 style="font-size: 2.5rem; font-weight: 300; margin-bottom: 20px; color: #333;">Welcome! 👋</h2>
+            <p style="font-size: 1.2rem; color: #666; margin-bottom: 40px; line-height: 1.6;">
+                Create and manage Spack packages with ease.
+            </p>
+            <button class="btn btn-success" @click="createSession()" :disabled="apiStates.creatingSession" style="font-size: 16px; padding: 15px 30px;">
+                <span x-show="!apiStates.creatingSession">Start</span>
+                <span x-show="apiStates.creatingSession">Starting...</span>
+            </button>
+        </div>
+
+        <!-- Progress Bar -->
+        <div x-show="sessionId" class="progress-bar">
+            <div class="progress-fill" :style="`width: ${(currentStep / totalSteps) * 100}%`"></div>
+        </div>
+
+        <!-- Step 1: Package Information -->
+        <div x-show="sessionId" class="step" :class="{ active: currentStep === 1 }">
+            <h2 class="step-title">Step 1: Package Information</h2>
+
+            <div class="input-group">
+                <label for="packageName">Package Name:</label>
+                <input type="text" id="packageName" x-model="packageName"
+                       placeholder="e.g., numpy, ggplot2, cmake, fastapi" />
+            </div>
+
+            <div class="input-group">
+                <label for="packageType">Package Type:</label>
+                <select id="packageType" x-model="packageType">
+                    <option value="python">Python Package</option>
+                    <option value="r">R Package</option>
+                    <option value="other">Other Package</option>
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label>Package URL (if known):</label>
+                <input type="url" x-model="packageUrl"
+                       placeholder="https://github.com/owner/repo or https://pypi.org/project/package" />
+            </div>
+
+            <div class="info-box" x-show="packageName">
+                <strong>Configuration:</strong><br>
+                Package Name: <strong x-text="packageName"></strong><br>
+                Package Type: <strong x-text="packageType"></strong><br>
+                Spack Recipe Name: <strong x-text="getRecipeName()"></strong>
+            </div>
+
+        </div>
+
+        <!-- Step 2: Recipe Existence Check -->
+        <div x-show="sessionId" class="step" :class="{ active: currentStep === 2 }">
+            <h2 class="step-title">Step 2: Check if Recipe Exists</h2>
+
+            <div class="info-box">
+                Checking if a recipe already exists in the spack-repo...
+            </div>
+
+            <div x-show="recipeChecking" class="info-box">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div style="width: 20px; height: 20px; border: 2px solid #667eea; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                    Checking GitHub repository for <strong x-text="getRecipeName()"></strong>...
+                </div>
+            </div>
+
+            <div x-show="!recipeChecking && recipeExists === 'yes'" class="success-box">
+                ✅ Recipe found! The package <strong x-text="getRecipeName()"></strong> already exists in the spack-repo.
+                <br><br>
+                <strong>GitHub URL:</strong> <a :href="'https://github.com/wtsi-hgi/spack-repo/tree/main/packages/' + getRecipeName() + '/package.py'" target="_blank" style="color: #28a745;">View Recipe</a>
+            </div>
+
+            <div x-show="!recipeChecking && recipeExists === 'no'" class="warning-box">
+                ❌ Recipe not found. The package <strong x-text="getRecipeName()"></strong> doesn't exist in the spack-repo yet.
+                <br><br>
+                We'll need to create a new recipe for this package.
+            </div>
+
+            <div x-show="!recipeChecking && recipeExists === 'manual'" class="info-box">
+                ⚠️ Unable to automatically check recipe existence due to network restrictions.
+                <br><br>
+                Please manually check if the recipe exists:
+                <div class="command-box">
+                    <button class="copy-btn" @click="copyToClipboard('ls packages/' + getRecipeName() + '/')">Copy</button>
+                    <span x-text="'ls packages/' + getRecipeName() + '/'"></span>
+                </div>
+
+                <div class="input-group">
+                    <label>Does the recipe exist?</label>
+                    <div class="radio-group">
+                        <div class="radio-option">
+                            <input type="radio" id="exists-yes" x-model="recipeExists" value="yes" />
+                            <label for="exists-yes">Yes, recipe exists</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="exists-no" x-model="recipeExists" value="no" />
+                            <label for="exists-no">No, recipe doesn't exist</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
+        </div>
+
+        <!-- Step 3a: Existing Recipe - Version Check -->
+        <div x-show="sessionId" class="step" :class="{ active: currentStep === 3 && recipeExists === 'yes' }">
+            <h2 class="step-title">Step 3: Recipe Exists - Version Management</h2>
+
+            <div class="input-group">
+                <label>Do you need a specific version?</label>
+                <div class="radio-group">
+                    <div class="radio-option">
+                        <input type="radio" id="version-yes" x-model="needsSpecificVersion" value="yes" />
+                        <label for="version-yes">Yes, need specific version</label>
+                    </div>
+                    <div class="radio-option">
+                        <input type="radio" id="version-no" x-model="needsSpecificVersion" value="no" />
+                        <label for="version-no">No, use existing</label>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="needsSpecificVersion === 'yes'">
+                <div class="info-box">
+                    Add a new version to the existing recipe:
+                </div>
+
+                <div class="input-group">
+                    <label for="newVersion">New Version:</label>
+                    <input type="text" id="newVersion" x-model="newVersion"
+                           placeholder="e.g., 1.2.3" />
+                </div>
+
+                <div class="command-box">
+                    <button class="copy-btn" @click="runSpackChecksum()" :disabled="apiStates.runningChecksum">
+                        <span x-show="!apiStates.runningChecksum">Run Checksum</span>
+                        <span x-show="apiStates.runningChecksum">Running...</span>
+                    </button>
+                    <span x-text="'spack checksum -b ' + getRecipeName()"></span>
+                </div>
+
+                <div x-show="apiResults.checksums" class="success-box">
+                    <strong>Available Checksums:</strong>
+                    <div x-show="apiResults.checksums && apiResults.checksums.success">
+                        <!-- Show specific version checksum first if specified -->
+                        <div x-show="newVersion && apiResults.checksums.checksums[newVersion]" style="margin-bottom: 15px;">
+                            <strong>Checksum for version <span x-text="newVersion"></span>:</strong>
+                            <div class="command-box" style="margin: 10px 0; background: #e8f5e8;">
+                                <button class="copy-btn" @click="copyToClipboard(`version(\"${newVersion}\", sha256=\"${apiResults.checksums.checksums[newVersion]}\")`)" style="background: #28a745;">Copy</button>
+                                <span style="font-family: monospace; font-size: 13px; color: #155724;" x-text="getVersionCommand()"></span>
+                            </div>
+                        </div>
+
+                        <div x-data="{ showAllChecksums: false }">
+                            <button @click="showAllChecksums = !showAllChecksums" class="btn btn-secondary">
+                                <span x-text="showAllChecksums ? 'Hide All Checksums' : 'Show All Checksums'"></span>
+                            </button>
+                            <div x-show="showAllChecksums" style="margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto;">
+                                <template x-for="[version, checksum] in Object.entries(apiResults.checksums.checksums)">
+                                    <div style="margin: 5px 0; padding: 5px; border-radius: 3px;"
+                                         :style="version === newVersion ? 'background-color: #fff3cd; border: 1px solid #ffeaa7;' : ''">
+                                        <div style="cursor: pointer;" @click="copyToClipboard(`version(\"${version}\", sha256=\"${checksum}\")`)"
+                                             title="Click to copy">
+                                            version("<strong x-text="version"></strong>", sha256="<span x-text="checksum"></span>")
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                    <div x-show="apiResults.checksums && !apiResults.checksums.success" class="warning-box">
+                        Error: <span x-text="apiResults.checksums.message"></span>
+                    </div>
+                </div>
+
+                <div class="warning-box">
+                    <strong>Manual Step:</strong> Edit the recipe file to add the new version and SHA256 checksum from the output above.
+                </div>
+            </div>
+
+            <div x-show="needsSpecificVersion === 'no'">
+                <div class="success-box">
+                    ✅ Great! You can use the existing recipe as-is. Proceed to installation testing.
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3b: New Recipe Creation -->
+        <div x-show="sessionId" class="step" :class="{ active: currentStep === 3 && recipeExists === 'no' }">
+            <h2 class="step-title">Step 3: Create New Recipe</h2>
+
+            <div x-show="packageType === 'python'">
+                <div class="info-box">
+                    For Python packages, we'll try the automated PyPackageCreator first:
+                </div>
+
+                <div class="command-box">
+                    <button class="copy-btn" @click="runPyPackageCreator()" :disabled="apiStates.creatingPypi">
+                        <span x-show="!apiStates.creatingPypi">Run PyPackageCreator</span>
+                        <span x-show="apiStates.creatingPypi">Creating...</span>
+                    </button>
+                    <span style="white-space: pre-line;" x-text="getPyPackageCreatorCommand()"></span>
+                </div>
+
+                <div x-show="apiResults.pypiResult" class="info-box">
+                    <div x-show="apiResults.pypiResult && apiResults.pypiResult.success" class="success-box">
+                        <strong>✅ PyPI Package Created Successfully!</strong><br>
+                        Package: <span x-text="apiResults.pypiResult.package_name"></span><br>
+                        <span x-show="apiResults.pypiResult.recipe_path">
+                            Recipe: <span x-text="apiResults.pypiResult.recipe_path"></span>
+                        </span>
+                    </div>
+                    <div x-show="apiResults.pypiResult && !apiResults.pypiResult.success" class="warning-box">
+                        <strong>❌ PyPI Package Creation Failed</strong><br>
+                        Error: <span x-text="apiResults.pypiResult.message"></span>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label>Was PyPI creation successful?</label>
+                    <div class="radio-group">
+                        <div class="radio-option">
+                            <input type="radio" id="pypi-yes" x-model="pypiSuccess" value="yes" />
+                            <label for="pypi-yes">Yes, created successfully</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="pypi-no" x-model="pypiSuccess" value="no" />
+                            <label for="pypi-no">No, failed or incomplete</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="packageType !== 'python' || pypiSuccess === 'no'">
+                <div class="info-box">
+                    Let's check the official Spack repository and create a recipe:
+                </div>
+
+                <div x-show="officialChecking" class="info-box">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 20px; height: 20px; border: 2px solid #667eea; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        Checking official Spack repository for <strong x-text="packageName"></strong>...
+                    </div>
+                </div>
+
+                <div x-show="!officialChecking && foundInOfficial === 'yes'" class="success-box">
+                    ✅ Package found in official Spack repository! The create command will copy the existing recipe.
+                </div>
+
+                <div x-show="!officialChecking && foundInOfficial === 'no'" class="warning-box">
+                    ❌ Package not found in official Spack repository. You'll need to create a recipe manually.
+                </div>
+
+                <div x-show="foundInOfficial === 'yes'" class="command-box">
+                    <button class="copy-btn" @click="runCopyPackage()" :disabled="apiStates.copyingPackage">
+                        <span x-show="!apiStates.copyingPackage">Copy Package</span>
+                        <span x-show="apiStates.copyingPackage">Copying...</span>
+                    </button>
+                    <span x-text="'create ' + getRecipeName()"></span>
+                </div>
+
+                <div x-show="apiResults.copyResult" class="info-box">
+                    <div x-show="apiResults.copyResult && apiResults.copyResult.success" class="success-box">
+                        <strong>✅ Package Copied Successfully!</strong><br>
+                        Package: <span x-text="apiResults.copyResult.package_name"></span><br>
+                        <span x-show="apiResults.copyResult.recipe_path">
+                            Recipe: <span x-text="apiResults.copyResult.recipe_path"></span>
+                        </span>
+                    </div>
+                    <div x-show="apiResults.copyResult && !apiResults.copyResult.success" class="warning-box">
+                        <strong>❌ Package Copy Failed</strong><br>
+                        Error: <span x-text="apiResults.copyResult.message"></span>
+                    </div>
+                </div>
+
+                <div x-show="foundInOfficial === 'yes'">
+                    <div class="success-box">
+                        ✅ Excellent! The official recipe has been copied as a base. You can modify it as needed.
+                        <br><br>
+                        <strong>Official Recipe URL:</strong> <a :href="'https://github.com/spack/spack-packages/blob/develop/repos/spack_repo/builtin/packages/' + packageName + '/package.py'" target="_blank" style="color: #28a745;">View Official Recipe</a>
+                    </div>
+                </div>
+
+                <div x-show="foundInOfficial === 'no'">
+                    <div class="input-group">
+                        <label>Does the project have GitHub releases/tags?</label>
+                        <div class="radio-group">
+                            <div class="radio-option">
+                                <input type="radio" id="releases-yes" x-model="hasReleases" value="yes" />
+                                <label for="releases-yes">Yes, has releases</label>
+                            </div>
+                            <div class="radio-option">
+                                <input type="radio" id="releases-no" x-model="hasReleases" value="no" />
+                                <label for="releases-no">No releases, use commit</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="hasReleases === 'yes'">
+                        <div class="input-group">
+                            <label for="releaseUrl">Release Archive URL:</label>
+                            <input type="url" id="releaseUrl" x-model="releaseUrl"
+                                   placeholder="https://github.com/owner/repo/archive/refs/tags/v1.0.0.tar.gz" />
+                        </div>
+
+                        <div class="command-box" x-show="releaseUrl">
+                            <button class="copy-btn" @click="runCreateFromUrl()" :disabled="apiStates.creatingFromUrl">
+                                <span x-show="!apiStates.creatingFromUrl">Create from URL</span>
+                                <span x-show="apiStates.creatingFromUrl">Creating...</span>
+                            </button>
+                            <span x-text="'spack create --skip-editor -b ' + releaseUrl"></span>
+                        </div>
+
+                        <div x-show="apiResults.urlResult" class="info-box">
+                            <div x-show="apiResults.urlResult && apiResults.urlResult.success" class="success-box">
+                                <strong>✅ Recipe Created from URL!</strong><br>
+                                <span x-show="apiResults.urlResult.package_name">
+                                    Package: <span x-text="apiResults.urlResult.package_name"></span><br>
+                                </span>
+                                <span x-show="apiResults.urlResult.recipe_path">
+                                    Recipe: <span x-text="apiResults.urlResult.recipe_path"></span>
+                                </span>
+                            </div>
+                            <div x-show="apiResults.urlResult && !apiResults.urlResult.success" class="warning-box">
+                                <strong>❌ Recipe Creation Failed</strong><br>
+                                Error: <span x-text="apiResults.urlResult.message"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="hasReleases === 'no'">
+                        <div class="input-group">
+                            <label for="repoUrl">Repository URL:</label>
+                            <input type="url" id="repoUrl" x-model="repoUrl"
+                                   placeholder="https://github.com/owner/repo" />
+                        </div>
+
+                        <div class="command-box" x-show="repoUrl">
+                            <button class="copy-btn" @click="runGetCommitInfo()" :disabled="apiStates.gettingCommitInfo">
+                                <span x-show="!apiStates.gettingCommitInfo">Get Commit Info</span>
+                                <span x-show="apiStates.gettingCommitInfo">Getting...</span>
+                            </button>
+                            <span style="white-space: pre-line;" x-text="getCommitCommands()"></span>
+                        </div>
+
+                        <div x-show="apiResults.commitInfo" class="info-box">
+                            <div x-show="apiResults.commitInfo && apiResults.commitInfo.success" class="success-box">
+                                <strong>✅ Git Commit Info Retrieved!</strong><br>
+                                Commit: <span x-text="apiResults.commitInfo.commit_hash"></span><br>
+                                Date: <span x-text="apiResults.commitInfo.commit_date"></span><br>
+                                <br>
+                                <strong>Add to recipe:</strong><br>
+                                <code>version("<span x-text="apiResults.commitInfo.commit_date"></span>", commit="<span x-text="apiResults.commitInfo.commit_hash"></span>")</code>
+                            </div>
+                            <div x-show="apiResults.commitInfo && !apiResults.commitInfo.success" class="warning-box">
+                                <strong>❌ Failed to Get Commit Info</strong><br>
+                                Error: <span x-text="apiResults.commitInfo.message"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Recipe Modification -->
+        <div x-show="sessionId" class="step" :class="{ active: currentStep === 4 }">
+            <h2 class="step-title">Step 4: Gather Info and Modify Recipe</h2>
+
+            <div x-show="packageType === 'python' && pypiSuccess === 'yes'" class="success-box">
+                ✅ <strong>PyPackageCreator was used successfully!</strong><br><br>
+                The recipe has been automatically generated with most common modifications already applied.
+                <br><br>
+            </div>
+
+            <div x-show="packageType !== 'python' || pypiSuccess === 'no'" class="info-box">
+                Now you need to research the package and add proper dependencies to the recipe.
+            </div>
+
+            <!-- Recipe Editor Section -->
+            <div style="margin-bottom: 30px;">
+                <!-- Recipe Selection Menu -->
+                <div style="margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <label style="font-weight: 500; color: #333; font-size: 16px;">Select Recipe to Edit:</label>
+                        <button class="btn btn-secondary" @click="loadRecipes()" :disabled="apiStates.loadingRecipes" style="padding: 8px 16px; font-size: 12px;">
+                            <span x-show="!apiStates.loadingRecipes">Refresh Recipes</span>
+                            <span x-show="apiStates.loadingRecipes">Loading...</span>
+                        </button>
+                    </div>
+
+                    <div x-show="apiStates.loadingRecipes" style="text-align: center; padding: 20px; color: #666; border: 1px solid #e0e0e0; border-radius: 4px; background: #f8f9fa;">
+                        <div style="display: inline-block; width: 20px; height: 20px; border: 2px solid #333; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px;"></div>
+                        Loading recipes...
+                    </div>
+
+                    <div x-show="!apiStates.loadingRecipes && (!apiResults.recipes || apiResults.recipes.length === 0)" style="text-align: center; padding: 20px; color: #666; border: 1px solid #e0e0e0; border-radius: 4px; background: #f8f9fa;">
+                        No recipes found in session
+                    </div>
+
+                    <div x-show="!apiStates.loadingRecipes && apiResults.recipes && apiResults.recipes.length > 0">
+                        <select @change="$event.target.value ? selectRecipe(apiResults.recipes.find(r => r.package_name === $event.target.value)) : selectRecipe(null)"
+                                x-model="selectedRecipe?.package_name || ''"
+                                style="width: 100%; padding: 12px; border: 1px solid #e0e0e0; border-radius: 4px; font-size: 14px; background: white; box-sizing: border-box;">
+                            <option value="">Select a recipe...</option>
+                            <template x-for="recipe in apiResults.recipes" :key="recipe.package_name">
+                                <option :value="recipe.package_name"
+                                        x-text="recipe.package_name + (recipe.exists ? ' ✓' : ' ✗') + (recipe.package_name === getRecipeName() ? ' (Current Package)' : '')"></option>
+                            </template>
+                        </select>
+
+                        <!-- Selected Recipe Info -->
+                        <div x-show="selectedRecipe" style="margin-top: 10px; padding: 10px; background: #f0f8ff; border: 1px solid #b3d9ff; border-radius: 4px; font-size: 13px;">
+                            <strong x-text="selectedRecipe.package_name"></strong>
+                            <span style="color: #666; margin-left: 10px;" x-text="selectedRecipe.file_path"></span>
+                            <span x-show="selectedRecipe.size" style="color: #999; margin-left: 10px;" x-text="'(' + (selectedRecipe.size / 1024).toFixed(1) + ' KB)'"></span>
+                            <span x-show="selectedRecipe.exists" style="color: #28a745; margin-left: 10px;">✓ File Exists</span>
+                            <span x-show="!selectedRecipe.exists" style="color: #dc3545; margin-left: 10px;">✗ File Missing</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recipe Editor -->
+                <div style="width: 100%;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <strong style="font-size: 16px; color: #333;">Recipe Editor</strong>
+                        <div style="display: flex; gap: 10px;">
+                            <button @click="validateRecipe()" :disabled="!selectedRecipe || !recipeContent || apiStates.validatingRecipe"
+                                    class="btn btn-warning" style="padding: 10px 20px; font-size: 14px;">
+                                <span x-show="!apiStates.validatingRecipe">Validate Recipe</span>
+                                <span x-show="apiStates.validatingRecipe">Validating...</span>
+                            </button>
+                            <button @click="saveRecipe()" :disabled="!selectedRecipe || !recipeContent || apiStates.savingRecipe"
+                                    class="btn btn-success" style="padding: 10px 20px; font-size: 14px;">
+                                <span x-show="!apiStates.savingRecipe">Save Recipe</span>
+                                <span x-show="apiStates.savingRecipe">Saving...</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div x-show="!selectedRecipe" style="text-align: center; padding: 60px; color: #666; border: 1px solid #e0e0e0; border-radius: 4px; background: #f8f9fa; font-size: 16px;">
+                        Select a recipe from the dropdown above to start editing
+                    </div>
+
+                    <div x-show="selectedRecipe" style="width: 100%;">
+                        <textarea x-model="recipeContent"
+                                  style="width: 100%; height: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 4px; font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace; font-size: 14px; line-height: 1.6; resize: vertical; background: #fafafa; box-sizing: border-box;"
+                                  placeholder="Recipe content will appear here..."></textarea>
+
+                        <!-- Validation Results -->
+                        <div x-show="validationResult" style="margin-top: 20px;">
+                            <div :class="validationResult && validationResult.is_valid ? 'success-box' : 'warning-box'">
+                                <div style="font-weight: 500; font-size: 16px;">
+                                    <span x-show="validationResult && validationResult.is_valid">✅ Valid Recipe</span>
+                                    <span x-show="validationResult && !validationResult.is_valid">❌ Invalid Recipe</span>
+                                </div>
+                                <div x-show="validationResult.errors && validationResult.errors.length > 0" style="margin-top: 15px;">
+                                    <div style="font-weight: 500; color: #dc3545; font-size: 14px;">Errors:</div>
+                                    <ul style="margin: 8px 0; padding-left: 20px;">
+                                        <template x-for="error in validationResult.errors" :key="error">
+                                            <li style="color: #dc3545; font-size: 14px; margin: 4px 0;" x-text="error"></li>
+                                        </template>
+                                    </ul>
+                                </div>
+                                <div x-show="validationResult.warnings && validationResult.warnings.length > 0" style="margin-top: 15px;">
+                                    <div style="font-weight: 500; color: #856404; font-size: 14px;">Warnings:</div>
+                                    <ul style="margin: 8px 0; padding-left: 20px;">
+                                        <template x-for="warning in validationResult.warnings" :key="warning">
+                                            <li style="color: #856404; font-size: 14px; margin: 4px 0;" x-text="warning"></li>
+                                        </template>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="packageType !== 'python' || pypiSuccess === 'no'" class="warning-box">
+                <strong>Study Examples:</strong><br>
+                • Python: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/py-agate/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>py-agate</code></a><br>
+                • R: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/r-archr/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>r-archr</code></a>, <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/r-plotlistr/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>r-plotlistr</code></a><br>
+                • Other: <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/samtools/package.py" target="_blank" style="color: #333; text-decoration: underline;"><code>samtools</code></a><br><br>
+                Look in the <code>examples/</code> folder for guidance.
+            </div>
+
+            <div x-show="packageUrl" class="info-box">
+                <strong>Package URL:</strong><br>
+                <a :href="packageUrl" target="_blank" style="color: #333; text-decoration: underline;" x-text="packageUrl"></a>
+            </div>
+
+            <div class="input-group">
+                <label>Common modifications needed:</label>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="deps" x-model="modifications.dependencies"
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
+                    <label for="deps">Add proper description and homepage URL</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="optional" x-model="modifications.optional"
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
+                    <label for="optional">Add git repository URL and license</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="patches" x-model="modifications.patches"
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
+                    <label for="patches">Add version with commit hash</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="flags" x-model="modifications.buildFlags"
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
+                    <label for="flags">Add dependencies to depends_on()</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="class" x-model="modifications.classType"
+                           :checked="packageType === 'python' && pypiSuccess === 'yes'" />
+                    <label for="class">Change class from Package to RPackage/PythonPackage</label>
+                </div>
+            </div>
+
+            <div x-show="packageType === 'python' && pypiSuccess === 'yes'" class="warning-box">
+                <strong>⚠️ Important:</strong> Even though PyPackageCreator handled most modifications, always verify the generated recipe for syntax errors and accuracy before proceeding to build.
+            </div>
+        </div>
+
+        <!-- Step 5: Build and Test -->
+        <div x-show="sessionId" class="step" :class="{ active: currentStep === 5 }">
+            <h2 class="step-title">Step 5: Build and Test</h2>
+
+            <div class="info-box">
+                Now let's build the package and test it:
+            </div>
+
+            <div class="command-box">
+                <button class="copy-btn" @click="runSpackInstall()" :disabled="apiStates.installingPackage">
+                    <span x-show="!apiStates.installingPackage">Install Package</span>
+                    <span x-show="apiStates.installingPackage">Installing...</span>
+                </button>
+                <span x-text="'spack install ' + getRecipeName()"></span>
+            </div>
+
+            <!-- Installation Output -->
+            <div style="margin: 30px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <strong style="font-size: 16px; color: #333;">Installation Output</strong>
+                    <button @click="clearInstallOutput()" class="btn btn-secondary" style="padding: 8px 16px; font-size: 12px;">
+                        Clear Output
+                    </button>
+                </div>
+                <div class="stream-output">
+                    <template x-for="(line, index) in installOutput" :key="index">
+                        <div :class="getOutputLineClass(line)" x-text="line.data"></div>
+                    </template>
+                    <div x-show="installOutput.length === 0" style="color: #888; font-style: italic;">
+                        Installation output will appear here...
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="apiResults.installResult" class="info-box">
+                <div x-show="apiResults.installResult && apiResults.installResult.success" class="success-box">
+                    <strong>✅ Package Installed Successfully!</strong><br>
+                    Package: <span x-text="apiResults.installResult.package_name"></span><br>
+                    Message: <span x-text="apiResults.installResult.message"></span>
+                </div>
+                <div x-show="apiResults.installResult && !apiResults.installResult.success" class="warning-box">
+                    <strong>❌ Package Installation Failed</strong><br>
+                    Error: <span x-text="apiResults.installResult.message"></span>
+                    <br><br>
+                    <strong>Troubleshooting:</strong><br>
+                    • Check the installation output above for error details<br>
+                    • Add missing dependencies to the recipe<br>
+                    • Fix version constraints<br>
+                    • Add patches if needed<br>
+                    • Modify build flags<br><br>
+                    Fix the recipe and try building again.
+                </div>
+            </div>
+
+            <div x-show="buildSuccess === 'yes'">
+                <div class="success-box">
+                    ✅ Build successful! Now let's validate the package:
+                </div>
+
+                <div class="info-box">
+                    <strong>Validation Steps:</strong><br>
+                    1. First, try the simple validation command below<br>
+                    2. If you get "matches multiple packages" error, use the selection command instead
+                </div>
+
+                <div class="command-box">
+                    <button class="copy-btn" @click="runPackageValidation()" :disabled="apiStates.validatingPackage">
+                        <span x-show="!apiStates.validatingPackage">Validate Package</span>
+                        <span x-show="apiStates.validatingPackage">Validating...</span>
+                    </button>
+                    <span x-text="getValidationCommand()"></span>
+                </div>
+
+                <div x-show="apiResults.validationResult" class="info-box">
+                    <div x-show="apiResults.validationResult && apiResults.validationResult.success" class="success-box">
+                        <strong>✅ Package Validation Successful!</strong><br>
+                        Package: <span x-text="apiResults.validationResult.package_name"></span> (<span x-text="apiResults.validationResult.package_type"></span>)
+                    </div>
+                    <div x-show="apiResults.validationResult && !apiResults.validationResult.success" class="warning-box">
+                        <strong>❌ Package Validation Failed</strong><br>
+                        Error: <span x-text="apiResults.validationResult.message"></span><br>
+                        <div x-show="apiResults.validationResult.validation_output">
+                            Output: <pre style="font-size: 12px; margin-top: 10px;" x-text="apiResults.validationResult.validation_output"></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="warning-box">
+                    <strong>If you get "matches multiple packages" error:</strong><br>
+                    Enter a specific hash and try validation again:
+                </div>
+
+                <div class="input-group">
+                    <label for="hashSelection">Hash Selection (if needed):</label>
+                    <input type="text" id="hashSelection" x-model="hashSelection" placeholder="e.g., tkodior" />
+                </div>
+
+                <div class="command-box" x-show="hashSelection">
+                    <button class="copy-btn" @click="runPackageValidation(hashSelection)" :disabled="apiStates.validatingPackage">
+                        <span x-show="!apiStates.validatingPackage">Validate with Hash</span>
+                        <span x-show="apiStates.validatingPackage">Validating...</span>
+                    </button>
+                    <span x-text="getValidationCommandWithSelection()"></span>
+                </div>
+
+                <div class="input-group">
+                    <label>Was validation successful?</label>
+                    <div class="radio-group">
+                        <div class="radio-option">
+                            <input type="radio" id="valid-yes" x-model="validationSuccess" value="yes" />
+                            <label for="valid-yes">Yes, validation passed</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="valid-no" x-model="validationSuccess" value="no" />
+                            <label for="valid-no">No, validation failed</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div x-show="validationSuccess === 'no'">
+                    <div class="command-box">
+                        <button class="copy-btn" @click="runSpackUninstallAll()" :disabled="apiStates.uninstallingPackage">
+                            <span x-show="!apiStates.uninstallingPackage">Uninstall Package</span>
+                            <span x-show="apiStates.uninstallingPackage">Uninstalling...</span>
+                        </button>
+                        <span x-text="'spack uninstall -y --all --dependents ' + getRecipeName()"></span>
+                    </div>
+
+                    <div x-show="apiResults.uninstallResult" class="info-box">
+                        <div x-show="apiResults.uninstallResult && apiResults.uninstallResult.success" class="success-box">
+                            <strong>✅ Package Uninstalled Successfully!</strong><br>
+                            Uninstalled: <span x-text="apiResults.uninstallResult.uninstalled_packages.join(', ')"></span>
+                        </div>
+                        <div x-show="apiResults.uninstallResult && !apiResults.uninstallResult.success" class="warning-box">
+                            <strong>❌ Package Uninstall Failed</strong><br>
+                            Error: <span x-text="apiResults.uninstallResult.message"></span>
+                        </div>
+                    </div>
+
+                    <div class="warning-box">
+                        <strong>Validation Failed:</strong><br>
+                        • Check import paths<br>
+                        • Verify package installation<br>
+                        • Fix missing runtime dependencies<br><br>
+                        Fix the recipe and rebuild.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 6: Create PR -->
+        <div x-show="sessionId" class="step" :class="{ active: currentStep === 6 }">
+            <h2 class="step-title">Step 6: Create Pull Request</h2>
+
+            <div class="success-box">
+                🎉 Congratulations! Your package builds and validates successfully.
+            </div>
+
+            <div class="info-box">
+                Now create a pull request with these commands:
+            </div>
+
+            <div class="command-box">
+                <button class="copy-btn" @click="runCreatePullRequest()" :disabled="apiStates.creatingPR">
+                    <span x-show="!apiStates.creatingPR">Create Pull Request</span>
+                    <span x-show="apiStates.creatingPR">Creating...</span>
+                </button>
+                <span style="white-space: pre-line;" x-text="getPrCommands()"></span>
+            </div>
+
+            <div x-show="apiResults.prResult" class="info-box">
+                <div x-show="apiResults.prResult && apiResults.prResult.success" class="success-box">
+                    <strong>✅ Pull Request Prepared Successfully!</strong><br>
+                    Package: <span x-text="apiResults.prResult.package_name"></span><br>
+                    Branch: <span x-text="apiResults.prResult.branch_name"></span><br>
+                    <br>
+                    <strong>Next step:</strong> Create PR on GitHub web interface
+                </div>
+                <div x-show="apiResults.prResult && !apiResults.prResult.success" class="warning-box">
+                    <strong>❌ Pull Request Preparation Failed</strong><br>
+                    Error: <span x-text="apiResults.prResult.message"></span>
+                </div>
+            </div>
+
+            <div class="warning-box">
+                <strong>Final Steps:</strong><br>
+                1. Create PR on GitHub<br>
+                2. Wait for GitHub Actions validation<br>
+                3. Address any review comments<br>
+                4. Merge when approved!
+            </div>
+
+            <div class="input-group">
+                <label for="prUrl">PR URL (optional):</label>
+                <input type="url" id="prUrl" x-model="prUrl"
+                       placeholder="https://github.com/your-org/spack-repo/pull/123" />
+            </div>
+        </div>
+
+        <!-- Navigation -->
+        <div x-show="sessionId" class="navigation">
+            <button class="btn btn-secondary" @click="previousStep()"
+                    :disabled="currentStep === 1">Previous</button>
+
+            <button class="btn" @click="nextStep()"
+                    :disabled="!canProceed() || apiStates.creatingRecipe">
+                <span x-show="!apiStates.creatingRecipe" x-text="currentStep === totalSteps ? 'Finish' : 'Next'"></span>
+                <span x-show="apiStates.creatingRecipe">Processing...</span>
+            </button>
+        </div>
+
+        <!-- Debug Session Info -->
+        <div x-show="sessionId" style="position: fixed; bottom: 10px; right: 10px; font-size: 10px; color: #999; background: rgba(255,255,255,0.8); padding: 5px; border-radius: 3px;">
+            Session: <span x-text="sessionId"></span>
+        </div>
+    </div>
+</body>
+</html>

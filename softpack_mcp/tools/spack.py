@@ -10,19 +10,29 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from ..models.requests import (
+    SpackChecksumRequest,
     SpackCopyPackageRequest,
+    SpackCreateFromUrlRequest,
     SpackCreatePypiRequest,
     SpackInstallRequest,
     SpackSearchRequest,
+    SpackUninstallAllRequest,
+    SpackValidateRequest,
+    SpackVersionsRequest,
 )
 from ..models.responses import (
     OperationResult,
+    SpackChecksumResult,
     SpackCopyPackageResult,
+    SpackCreateFromUrlResult,
     SpackCreatePypiResult,
     SpackInstallResult,
     SpackInstallStreamResult,
     SpackPackage,
     SpackSearchResult,
+    SpackUninstallAllResult,
+    SpackValidationResult,
+    SpackVersionsResult,
 )
 from ..services.spack_service import SpackService, get_spack_service
 
@@ -292,4 +302,166 @@ async def copy_existing_package(
             message=f"Package copy failed: {str(e)}",
             package_name=request.package_name,
             copy_details={"error": str(e)},
+        )
+
+
+@router.post("/versions", response_model=SpackVersionsResult, operation_id="get_package_versions")
+async def get_package_versions(
+    request: SpackVersionsRequest, spack: SpackService = Depends(get_spack_service)
+) -> SpackVersionsResult:
+    """
+    Get available versions for a spack package.
+
+    This endpoint executes: spack versions {package_name}
+
+    Args:
+        request: Package versions request parameters
+
+    Returns:
+        Available versions result with status and details.
+    """
+    try:
+        result = await spack.get_package_versions(
+            package_name=request.package_name,
+            session_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Failed to get package versions", package=request.package_name, error=str(e))
+        return SpackVersionsResult(
+            success=False,
+            message=f"Failed to get versions: {str(e)}",
+            package_name=request.package_name,
+            versions=[],
+            version_details={"error": str(e)},
+        )
+
+
+@router.post("/checksum", response_model=SpackChecksumResult, operation_id="get_package_checksums")
+async def get_package_checksums(
+    request: SpackChecksumRequest, spack: SpackService = Depends(get_spack_service)
+) -> SpackChecksumResult:
+    """
+    Get checksums for a spack package.
+
+    This endpoint executes: spack checksum -b {package_name}
+
+    Args:
+        request: Package checksum request parameters
+
+    Returns:
+        Package checksums result with status and details.
+    """
+    try:
+        result = await spack.get_package_checksums(
+            package_name=request.package_name,
+            session_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Failed to get package checksums", package=request.package_name, error=str(e))
+        return SpackChecksumResult(
+            success=False,
+            message=f"Failed to get checksums: {str(e)}",
+            package_name=request.package_name,
+            checksums={},
+            checksum_details={"error": str(e)},
+        )
+
+
+@router.post("/create-from-url", response_model=SpackCreateFromUrlResult, operation_id="create_recipe_from_url")
+async def create_recipe_from_url(
+    request: SpackCreateFromUrlRequest, spack: SpackService = Depends(get_spack_service)
+) -> SpackCreateFromUrlResult:
+    """
+    Create a spack recipe from a URL.
+
+    This endpoint executes: spack create --skip-editor -b {url}
+
+    Args:
+        request: Recipe creation from URL parameters
+
+    Returns:
+        Recipe creation result with status and details.
+    """
+    try:
+        result = await spack.create_recipe_from_url(
+            url=request.url,
+            session_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Failed to create recipe from URL", url=request.url, error=str(e))
+        return SpackCreateFromUrlResult(
+            success=False,
+            message=f"Failed to create recipe from URL: {str(e)}",
+            url=request.url,
+            creation_details={"error": str(e)},
+        )
+
+
+@router.post("/validate", response_model=SpackValidationResult, operation_id="validate_package")
+async def validate_package(
+    request: SpackValidateRequest, spack: SpackService = Depends(get_spack_service)
+) -> SpackValidationResult:
+    """
+    Validate a spack package installation.
+
+    This endpoint executes singularity-based validation commands to test package functionality.
+
+    Args:
+        request: Package validation parameters
+
+    Returns:
+        Package validation result with status and details.
+    """
+    try:
+        result = await spack.validate_package(
+            package_name=request.package_name,
+            package_type=request.package_type,
+            hash_selection=request.hash_selection,
+            session_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Failed to validate package", package=request.package_name, error=str(e))
+        return SpackValidationResult(
+            success=False,
+            message=f"Package validation failed: {str(e)}",
+            package_name=request.package_name,
+            package_type=request.package_type,
+            validation_command="",
+            validation_details={"error": str(e)},
+        )
+
+
+@router.post("/uninstall-all", response_model=SpackUninstallAllResult, operation_id="uninstall_package_with_dependents")
+async def uninstall_package_with_dependents(
+    request: SpackUninstallAllRequest, spack: SpackService = Depends(get_spack_service)
+) -> SpackUninstallAllResult:
+    """
+    Uninstall a spack package and all its dependents.
+
+    This endpoint executes: spack uninstall -y --all --dependents {package_name}
+
+    Args:
+        request: Package uninstall parameters
+
+    Returns:
+        Uninstall result with status and details.
+    """
+    try:
+        result = await spack.uninstall_package_with_dependents(
+            package_name=request.package_name,
+            session_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Failed to uninstall package with dependents", package=request.package_name, error=str(e))
+        return SpackUninstallAllResult(
+            success=False,
+            message=f"Failed to uninstall package with dependents: {str(e)}",
+            package_name=request.package_name,
+            uninstalled_packages=[],
+            uninstall_details={"error": str(e)},
         )

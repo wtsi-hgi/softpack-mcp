@@ -32,6 +32,8 @@ class SpackVersionInfo(BaseModel):
 
     version: str = Field(..., description="Version number")
     url: str | None = Field(None, description="Download URL")
+    has_checksum: bool = Field(False, description="Whether this version has a checksum available")
+    checksum: str | None = Field(None, description="SHA256 checksum if available")
 
 
 class SpackDependencyInfo(BaseModel):
@@ -157,3 +159,75 @@ class SpackCopyPackageResult(OperationResult):
     destination_path: str | None = Field(None, description="Destination path in session")
     recipe_path: str | None = Field(None, description="Path to the copied recipe file")
     copy_details: dict[str, Any] | None = Field(None, description="Copy process details")
+
+
+class SpackVersionsResult(OperationResult):
+    """Result of getting available versions for a spack package."""
+
+    package_name: str = Field(..., description="Name of the package")
+    versions: list[str] = Field(default_factory=list, description="Available versions (deprecated)")
+    version_info: list[SpackVersionInfo] = Field(default_factory=list, description="Detailed version information")
+    version_details: dict[str, Any] | None = Field(None, description="Additional version information")
+
+
+class SpackChecksumResult(OperationResult):
+    """Result of getting checksums for a spack package."""
+
+    package_name: str = Field(..., description="Name of the package")
+    checksums: dict[str, str] = Field(default_factory=dict, description="Version to checksum mapping")
+    checksum_details: dict[str, Any] | None = Field(None, description="Additional checksum information")
+
+
+class SpackCreateFromUrlResult(OperationResult):
+    """Result of creating a spack recipe from a URL."""
+
+    url: str = Field(..., description="URL used to create the recipe")
+    package_name: str | None = Field(None, description="Detected package name")
+    recipe_path: str | None = Field(None, description="Path to the created recipe file")
+    creation_details: dict[str, Any] | None = Field(None, description="Creation process details")
+
+
+class SpackValidationResult(OperationResult):
+    """Result of validating a spack package installation."""
+
+    package_name: str = Field(..., description="Name of the validated package")
+    package_type: str = Field(..., description="Type of package validated")
+    validation_command: str = Field(..., description="Command used for validation")
+    validation_output: str | None = Field(None, description="Output from validation command")
+    validation_details: dict[str, Any] | None = Field(None, description="Additional validation information")
+
+
+class GitCommitInfoResult(OperationResult):
+    """Result of getting git commit information."""
+
+    repo_url: str = Field(..., description="Repository URL")
+    commit_hash: str | None = Field(None, description="Latest commit hash")
+    commit_date: str | None = Field(None, description="Commit date in YYYYMMDD format")
+    commit_details: dict[str, Any] | None = Field(None, description="Additional commit information")
+
+
+class GitPullRequestResult(OperationResult):
+    """Result of creating a git pull request."""
+
+    package_name: str = Field(..., description="Name of the package")
+    branch_name: str | None = Field(None, description="Created branch name")
+    commit_message: str | None = Field(None, description="Commit message used")
+    git_commands: list[str] = Field(default_factory=list, description="Git commands executed")
+    pr_details: dict[str, Any] | None = Field(None, description="Additional PR creation details")
+
+
+class SpackUninstallAllResult(OperationResult):
+    """Result of uninstalling a spack package and all its dependents."""
+
+    package_name: str = Field(..., description="Name of the uninstalled package")
+    uninstalled_packages: list[str] = Field(default_factory=list, description="List of packages that were uninstalled")
+    uninstall_details: dict[str, Any] | None = Field(None, description="Additional uninstall information")
+
+
+class GitPullResult(OperationResult):
+    """Result of git pull operation."""
+
+    repository_path: str = Field(..., description="Path to the repository that was updated")
+    changes_pulled: bool = Field(..., description="Whether new changes were pulled")
+    commit_hash: str | None = Field(None, description="Latest commit hash after pull")
+    pull_details: dict[str, Any] | None = Field(None, description="Additional pull information")

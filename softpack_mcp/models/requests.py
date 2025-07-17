@@ -51,3 +51,61 @@ class SpackCopyPackageRequest(BaseModel):
 
     package_name: str = Field(..., description="Name of the package to copy")
     session_id: str = Field(..., description="Session ID for isolated execution")
+
+
+class SpackVersionsRequest(BaseModel):
+    """Request to get available versions of a spack package."""
+
+    package_name: str = Field(..., description="Name of the package to get versions for")
+    session_id: str | None = Field(None, description="Session ID for isolated execution")
+
+
+class SpackChecksumRequest(BaseModel):
+    """Request to get checksums for a spack package."""
+
+    package_name: str = Field(..., description="Name of the package to get checksums for")
+    session_id: str | None = Field(None, description="Session ID for isolated execution")
+
+
+class SpackCreateFromUrlRequest(BaseModel):
+    """Request to create a spack recipe from a URL."""
+
+    url: str = Field(..., description="URL to create recipe from")
+    session_id: str | None = Field(None, description="Session ID for isolated execution")
+
+
+class SpackValidateRequest(BaseModel):
+    """Request to validate a spack package installation."""
+
+    package_name: str = Field(..., description="Name of the package to validate")
+    package_type: str = Field(default="python", description="Type of package (python, r, other)")
+    hash_selection: str | None = Field(None, description="Specific hash to use if multiple packages match")
+    session_id: str | None = Field(None, description="Session ID for isolated execution")
+
+
+class GitCommitInfoRequest(BaseModel):
+    """Request to get git commit information for a repository."""
+
+    repo_url: str = Field(..., description="Repository URL to get commit info from")
+    session_id: str | None = Field(None, description="Session ID for isolated execution")
+
+
+class GitPullRequestRequest(BaseModel):
+    """Request to create a git pull request."""
+
+    package_name: str = Field(..., description="Name of the package for the PR")
+    recipe_name: str | None = Field(None, description="Recipe name (defaults to package_name with prefix)")
+    session_id: str = Field(..., description="Session ID for isolated execution")
+
+
+class GitPullRequest(BaseModel):
+    """Request to pull updates from spack-repo."""
+
+    repo_path: str | None = Field(None, description="Path to repository (defaults to ~/spack-repo)")
+
+
+class SpackUninstallAllRequest(BaseModel):
+    """Request to uninstall a spack package and all its dependents."""
+
+    package_name: str = Field(..., description="Name of the package to uninstall")
+    session_id: str | None = Field(None, description="Session ID for isolated execution")
