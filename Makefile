@@ -15,13 +15,9 @@ help:
 init:
 	@echo "🚀 Initializing project..."
 	@echo "📦 Installing dependencies with uv..."
-	# check if uv is in path, if not set it
-	@if ! command -v uv &> /dev/null; then \
-		export PATH="/home/ubuntu/.local/bin:$$PATH"; \
-	fi
-	uv sync --dev
+	PATH="/home/ubuntu/.local/bin:$$PATH" uv sync --dev
 	@echo "🔧 Setting up pre-commit hooks..."
-	uv run pre-commit install
+	PATH="/home/ubuntu/.local/bin:$$PATH" uv run pre-commit install
 	@echo "📁 Creating necessary directories..."
 	mkdir -p data logs
 	@echo "📄 Creating .env file if it doesn't exist..."
@@ -38,7 +34,7 @@ debug:
 	@echo "🐛 Starting server in debug mode..."
 	@echo "🌐 Server will be available at http://localhost:8000"
 	@echo "📖 API docs at http://localhost:8000/docs"
-	@if [ -f .env ]; then export $$(cat .env | grep -E '^SOFTPACK_' | xargs); fi && SOFTPACK_DEBUG=true uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000 --reload
+	@if [ -f .env ]; then export $$(cat .env | grep -E '^SOFTPACK_' | xargs); fi && SOFTPACK_DEBUG=true PATH="/home/ubuntu/.local/bin:$$PATH" uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Run server in production mode (both backend and frontend)
 prod:
