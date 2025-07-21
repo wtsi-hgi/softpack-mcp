@@ -1,36 +1,72 @@
 # Softpack MCP Server
 
-A FastAPI-based MCP (Model Context Protocol) server that enables LLMs to interact with spack package management commands. This server is part of the Softpack ecosystem and provides a bridge between language models and the spack package manager.
+A comprehensive FastAPI-based MCP (Model Context Protocol) server that enables LLMs and external services to interact with spack package management commands. This server is part of the Softpack ecosystem and provides a complete bridge between language models and the spack package manager, including session management, recipe building, and Git integration.
 
 ## Features
 
-- 🚀 **FastAPI Integration**: Modern async/await web framework
-- 🔧 **MCP Protocol**: Seamless integration with language models
-- 📦 **Spack Commands**: Direct interface to spack package management
-- 📊 **Structured Logging**: Comprehensive logging with rotation
+- 🚀 **FastAPI Integration**: Modern async/await web framework with automatic API documentation
+- 🔧 **MCP Protocol**: Seamless integration with language models via fastapi-mcp
+- 📦 **Spack Commands**: Complete interface to spack package management operations
+- 🎯 **Session Management**: Isolated workspaces for package development
+- 📝 **Recipe Building**: Interactive recipe creation and management
+- 🔄 **Git Integration**: Automated Git operations for package workflows
+- 📊 **Structured Logging**: Comprehensive logging with rotation and context
 - 🛡️ **Error Handling**: Robust exception handling and validation
 - 🔒 **Security**: CORS and authentication support
 - 📖 **Auto Documentation**: Interactive API docs with Swagger UI
+- 🌐 **Web Wizard Interface**: Interactive 6-step wizard for package creation and management
 
 ## MCP Tools Available
 
-The server exposes the following tools to LLMs:
+The server exposes the following comprehensive set of tools to LLMs:
 
 ### Spack Package Management
 - `search_packages` - Search for available spack packages
-- `install_package` - Install a spack package with variants
-- `install_package_stream` - **NEW!** Install a spack package with real-time streaming output
 - `list_packages` - List installed packages
-- `get_package_info` - Get comprehensive package information (includes dependencies, variants, build details)
+- `get_package_info` - Get comprehensive package information
+- `install_package` - Install a spack package with variants
+- `install_package_stream` - Install with real-time streaming output
 - `uninstall_package` - Remove installed packages
-- `copy_existing_package` - **NEW!** Copy existing spack packages from builtin packages to session without using spack create
+- `uninstall_package_with_dependents` - Remove package and all dependents
+- `copy_existing_package` - Copy existing packages from builtin to session
+- `get_package_versions` - Get available versions for a package
+- `get_package_checksums` - Get checksums for package versions
+- `create_pypi_package` - Create spack package from PyPI
+- `create_recipe_from_url` - Create spack package from URL
+- `validate_package` - Validate package recipe
+- `validate_package_stream` - Validate with real-time streaming
+
+### Session Management
+- `create_session` - Create isolated development session
+- `list_sessions` - List all active sessions
+- `get_session_info` - Get session details
+- `delete_session` - Remove session and all contents
+- `list_session_files` - List files in session directory
+
+### Recipe Management
+- `create_recipe` - Create new package recipe
+- `list_recipes` - List all recipes in session
+- `read_recipe` - Read recipe content
+- `write_recipe` - Write/update recipe content
+- `delete_recipe` - Remove recipe
+- `validate_recipe` - Validate recipe syntax and content
+- `get_recipe_info` - Get recipe metadata
+
+### Git Operations
+- `pull_spack_repo` - Pull latest spack-repo updates
+- `get_git_commit_info` - Get commit information for repository
+- `create_pull_request` - Create pull request for package
+
+### Access Management
+- `request_collaborator_access` - Request GitHub collaborator access
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - Spack package manager installed
+- Git (for repository operations)
 
 ### Installation
 
@@ -53,158 +89,164 @@ This will:
 
 ### Running the Server
 
-#### Development Mode
-
+#### Development Mode (Backend Only)
 ```bash
 make debug
 ```
 
-#### Production Mode
-
+#### Production Mode (Backend + Frontend)
 ```bash
 make prod
 ```
+
+#### Frontend Only
+```bash
+make frontend
+```
+
+## Configuration
+
+### Environment Variables
+
+The application uses environment variables for configuration. Copy `.env.example` to `.env` and modify as needed:
+
+```bash
+cp .env.example .env
+```
+
+#### Available Environment Variables
+
+- `SOFTPACK_HOST`: Backend server host (default: `127.0.0.1`)
+- `SOFTPACK_PORT`: Backend server port (default: `8000`)
+- `SOFTPACK_DEBUG`: Enable debug mode (default: `false`)
+- `SOFTPACK_LOG_LEVEL`: Logging level (default: `INFO`)
+- `SOFTPACK_SPACK_EXECUTABLE`: Path to spack executable (default: `spack`)
+- `SOFTPACK_COMMAND_TIMEOUT`: Command execution timeout in seconds (default: `300`)
+- `API_BASE_URL`: Frontend API base URL (default: `http://localhost:8000`)
 
 ## API Documentation
 
 Once the server is running, visit:
 
 - **Interactive API Docs**: http://localhost:8000/docs
-- **MCP Endpoint**: http://localhost:8000/mcp
+- **ReDoc Documentation**: http://localhost:8000/redoc
+- **Health Check**: http://localhost:8000/health
+- **Web Wizard Interface**: http://localhost:8001
 
-## MCP Integration
+## Web Wizard Interface
 
-This server implements the Model Context Protocol (MCP), allowing language models to:
+The project includes a comprehensive web-based wizard interface (`index.html`) that provides an interactive 6-step workflow for creating and managing spack packages:
 
-1. **Discover Tools**: Automatically detect available spack commands
-2. **Execute Commands**: Run spack operations through structured API calls
-3. **Get Results**: Receive formatted responses with error handling
+### Wizard Steps
 
-### Example MCP Tool Usage
+1. **Package Information** - Enter package name and type (Python, R, or Other)
+2. **Recipe Existence Check** - Automatically check if recipe already exists in spack-repo
+3. **Recipe Creation/Version Management** - Create new recipes or manage versions for existing ones
+4. **Recipe Modification** - Interactive recipe editor with syntax highlighting and validation
+5. **Build and Test** - Install package and run validation tests with real-time output
+6. **Create Pull Request** - Prepare Git operations and request collaborator access
 
-```json
-{
-  "tool": "install_package",
-  "parameters": {
-    "package_name": "python",
-    "version": "3.11.0",
-    "variants": ["+shared", "+optimizations"],
-    "dependencies": ["zlib", "openssl"]
-  }
-}
-```
+### Key Features
 
-## Streaming Installation
+- **Interactive Recipe Editor** - Syntax-highlighted editor with real-time validation
+- **Real-time Streaming** - Live output for package installation and validation
+- **Automatic Recipe Generation** - Support for PyPI packages and existing spack recipes
+- **Session Management** - Isolated workspaces for package development
+- **Git Integration** - Automated branch creation and pull request preparation
+- **Access Management** - Built-in collaborator access request system
+- **Progress Tracking** - Visual progress bar and step-by-step guidance
 
-The server now supports **real-time streaming** of spack installation progress using Server-Sent Events (SSE). This allows you to see installation progress as it happens, rather than waiting for completion.
+### Accessing the Wizard
 
-### Streaming Endpoint
-
-```
-POST /spack/install/stream
-```
-
-### Features
-
-- **Real-time Progress**: See installation output as it happens
-- **Event Types**: Different event types (start, output, error, complete)
-- **Timestamps**: Each event includes a timestamp
-- **Success Tracking**: Final event indicates installation success/failure
-
-### Example Usage
+The wizard is served on port 8001 and automatically connects to the API server:
 
 ```bash
-# Using curl
+# Start both backend and frontend
+make prod
+
+# Or start frontend only (requires backend on port 8000)
+make frontend
+```
+
+Then visit: http://localhost:8001
+
+## Core Features
+
+### Session Management
+
+The server provides isolated development sessions for package building:
+
+```bash
+# Create a new session
+curl -X POST "http://localhost:8000/sessions/create" \
+  -H "Content-Type: application/json" \
+  -d '{"namespace": "my-packages"}'
+
+# List sessions
+curl "http://localhost:8000/sessions/list"
+```
+
+### Recipe Building
+
+Interactive recipe creation and management within sessions:
+
+```bash
+# Create a new recipe
+curl -X POST "http://localhost:8000/recipes/{session_id}/{package_name}/create"
+
+# Write recipe content
+curl -X PUT "http://localhost:8000/recipes/{session_id}/{package_name}" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "class MyPackage(Package): ..."}'
+
+# Validate recipe
+curl -X POST "http://localhost:8000/recipes/{session_id}/{package_name}/validate" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "class MyPackage(Package): ..."}'
+```
+
+### Streaming Operations
+
+Real-time streaming for long-running operations:
+
+```bash
+# Streaming installation
 curl -X POST "http://localhost:8000/spack/install/stream" \
   -H "Content-Type: application/json" \
   -d '{"package_name": "zlib", "version": "1.2.13"}' \
   --no-buffer
+
+# Streaming validation
+curl -X POST "http://localhost:8000/spack/validate/stream" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "my-session", "package_name": "my-package"}' \
+  --no-buffer
 ```
 
-### Example Client
+### Git Integration
 
-See `examples/streaming_client.py` for a complete Python client example.
-
-### Event Types
-
-- `start`: Installation started
-- `output`: Standard output from spack
-- `error`: Error output from spack
-- `complete`: Installation completed (with success status)
-
-### Benefits
-
-1. **Real-time Feedback**: No need to wait for completion to see progress
-2. **Better UX**: Users can see what's happening during long installations
-3. **Debugging**: Easier to identify where installations fail
-4. **Monitoring**: Can be used for monitoring and logging systems
-
-## Copy Existing Packages
-
-The server now supports **copying existing spack packages** from builtin packages to session directories without using `spack create`. This functionality mimics the `create()` function from the `.zshrc` file but skips the `spack create` step.
-
-### Copy Package Endpoint
-
-```
-POST /spack/copy-package
-```
-
-### Features
-
-- **Direct Copy**: Copies existing packages from builtin packages to session
-- **Legacy Spack Support**: Automatically checks out legacy spack commit `78f95ff38d591cbe956a726f4a93f57d21840f86` before copying packages
-- **Automatic Modifications**: Applies the same modifications as the shell function:
-  - Comments out `c`, `cxx`, and `fortran` build dependencies
-  - Removes `: EnvironmentModifications` from class definitions
-  - Removes `checked_by` from license lines
-  - Comments out `from spack_repo.builtin` imports
-- **Patch Files**: Automatically copies any `.patch` files
-- **Session Isolation**: Works within isolated session directories
-
-### Example Usage
+Automated Git operations for package workflows:
 
 ```bash
-# Using curl
-curl -X POST "http://localhost:8000/spack/copy-package" \
+# Pull latest spack-repo updates
+curl -X POST "http://localhost:8000/git/pull" \
   -H "Content-Type: application/json" \
-  -d '{"package_name": "zlib", "session_id": "your-session-id"}'
+  -d '{"repo_path": "/path/to/spack-repo"}'
+
+# Create pull request
+curl -X POST "http://localhost:8000/git/pull-request" \
+  -H "Content-Type: application/json" \
+  -d '{"package_name": "my-package", "session_id": "my-session"}'
 ```
 
-### Example Response
+## Examples
 
-```json
-{
-  "success": true,
-  "message": "Successfully copied package 'zlib' to session your-session-id",
-  "package_name": "zlib",
-  "source_path": "repos/spack_repo/builtin/packages/zlib",
-  "destination_path": "spack-repo/packages/zlib",
-  "recipe_path": "spack-repo/packages/zlib/package.py",
-  "copy_details": {
-    "patch_files": ["w_patch.patch", "configure-cc.patch"],
-          "legacy_commit": "78f95ff38d591cbe956a726f4a93f57d21840f86",
-      "git_checkout_success": true,
-      "modifications_applied": [
-        "commented_out_c_cxx_fortran_dependencies",
-        "removed_environment_modifications",
-        "removed_checked_by_from_licenses",
-        "commented_out_spack_repo_builtin_imports"
-      ]
-  }
-}
-```
+See the `examples/` directory for complete working examples:
 
-### Example Client
-
-See `examples/copy_package_example.py` for a complete Python client example.
-
-### Benefits
-
-1. **Faster Setup**: No need to run `spack create` for existing packages
-2. **Consistent Modifications**: Applies the same modifications as the shell function
-3. **Session Isolation**: Works within isolated session directories
-4. **Patch Preservation**: Automatically copies patch files
-5. **Error Handling**: Proper error handling for missing packages or sessions
+- `session_example.py` - Session management workflow
+- `recipe_example.py` - Recipe creation and validation
+- `copy_package_example.py` - Copying existing packages
+- `streaming_client.py` - Streaming installation client
 
 ## Development
 
@@ -223,6 +265,9 @@ pytest
 
 # Run with coverage
 pytest --cov=softpack_mcp
+
+# Run integration tests
+make test-integration
 ```
 
 ### Code Quality
@@ -236,6 +281,24 @@ uv run ruff format .
 uv run pre-commit run --all-files
 ```
 
+### System Service
+
+```bash
+# Install as system service
+make svc-install
+
+# Start/stop service
+make svc-start
+make svc-stop
+make svc-restart
+
+# View logs
+make svc-logs
+
+# Uninstall service
+make svc-uninstall
+```
+
 ## Project Structure
 
 ```
@@ -244,20 +307,36 @@ softpack-mcp/
 │   ├── __init__.py
 │   ├── main.py            # FastAPI application
 │   ├── config.py          # Configuration management
+│   ├── repos.yaml         # Spack repository configuration
 │   ├── models/            # Pydantic models
 │   │   ├── requests.py    # Request models
 │   │   └── responses.py   # Response models
 │   ├── tools/             # MCP tool implementations
-│   │   └── spack.py       # Spack tool endpoints
+│   │   ├── spack.py       # Spack tool endpoints
+│   │   ├── sessions.py    # Session management
+│   │   ├── recipes.py     # Recipe management
+│   │   ├── git.py         # Git operations
+│   │   └── access.py      # Access management
 │   ├── services/          # Business logic layer
-│   │   └── spack_service.py # Spack service
+│   │   ├── spack_service.py # Spack service
+│   │   ├── session_manager.py # Session management
+│   │   ├── git_service.py # Git operations
+│   │   └── access_service.py # Access management
 │   └── utils/             # Utility modules
 │       ├── logging.py     # Logging configuration
 │       └── exceptions.py  # Custom exceptions
 ├── examples/              # Example scripts and clients
-│   ├── streaming_client.py # Streaming installation example
+│   ├── session_example.py # Session management example
+│   ├── recipe_example.py  # Recipe building example
+│   ├── copy_package_example.py # Package copying example
+│   ├── streaming_client.py # Streaming client example
 │   └── README.md          # Examples documentation
 ├── tests/                 # Test suite
+├── index.html             # Web wizard interface for package creation
+├── serve_frontend.py      # Frontend server
+├── run_both.py           # Combined server runner
+├── softpack-mcp.service  # Systemd service file
+├── Makefile              # Build and run commands
 ├── pyproject.toml        # Project configuration
 └── README.md            # This file
 ```
@@ -269,9 +348,10 @@ softpack-mcp/
 3. Make your changes
 4. Add tests for new functionality
 5. Ensure all tests pass (`pytest`)
-6. Commit your changes (`git commit -m 'Add amazing feature'`)
-7. Push to the branch (`git push origin feature/amazing-feature`)
-8. Open a Pull Request
+6. Run code quality checks (`uv run pre-commit run --all-files`)
+7. Commit your changes (`git commit -m 'Add amazing feature'`)
+8. Push to the branch (`git push origin feature/amazing-feature`)
+9. Open a Pull Request
 
 ## License
 
@@ -286,50 +366,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Built with [FastAPI](https://fastapi.tiangolo.com/)
+- MCP integration via [fastapi-mcp](https://github.com/jlowin/fastapi-mcp)
 - Spack package manager support
 - Part of the Softpack ecosystem
-
-## Development Setup
-
-### Pre-commit Hooks
-
-This project uses `ruff` for code formatting and linting via pre-commit hooks.
-
-```bash
-# Initialize the project
-make init
-
-# Run pre-commit on all files
-uv run pre-commit run --all-files
-```
-
-### Ruff Configuration
-
-The project uses ruff for:
-- Code formatting (replaces black)
-- Import sorting (replaces isort)
-- Linting (includes pycodestyle, pyflakes, flake8-bugbear, etc.)
-
-Configuration is in `pyproject.toml` under `[tool.ruff]`.
-
-### Logging
-
-This project uses structured logging with automatic log rotation.
-
-Features:
-- Colored console output
-- Structured logging with context
-- Automatic log rotation
-- Exception tracing
-
-### Manual Ruff Usage
-
-You can also run ruff directly:
-
-```bash
-# Check and fix issues
-uv run ruff check . --fix
-
-# Format code
-uv run ruff format .
-```

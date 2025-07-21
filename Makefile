@@ -7,7 +7,6 @@ help:
 	@echo "  debug    - Run the server locally for debugging"
 	@echo "  prod     - Run the server in production mode"
 	@echo "  frontend - Serve the HTML frontend on port 8001"
-	@echo "  both     - Run both API (8000) and frontend (8001) servers"
 	@echo "  test-integration - Run the dit package integration test"
 	@echo "  clean    - Clean cache and temporary files"
 	@echo "  help     - Show this help message"
@@ -35,13 +34,13 @@ debug:
 	@echo "🐛 Starting server in debug mode..."
 	@echo "🌐 Server will be available at http://localhost:8000"
 	@echo "📖 API docs at http://localhost:8000/docs"
-	@if [ -f .env ]; then export $$(cat .env | xargs); fi && SOFTPACK_DEBUG=true uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000 --reload
+	@if [ -f .env ]; then export $$(cat .env | grep -E '^SOFTPACK_' | xargs); fi && SOFTPACK_DEBUG=true uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Run server in production mode (both backend and frontend)
 prod:
 	@echo "🚀 Starting Softpack MCP in production mode..."
 	@echo "🔗 API Server: http://0.0.0.0:8000"
-	@echo "🌐 Frontend: http://0.0.0.0:8001/frontend.html"
+	@echo "🌐 Frontend: http://0.0.0.0:8001"
 	@echo "📖 API Docs: http://0.0.0.0:8000/docs"
 	@if [ -f .env ]; then export $$(cat .env | xargs); fi && python3 run_both.py
 
@@ -59,11 +58,10 @@ clean:
 # Serve frontend on port 8001
 frontend:
 	@echo "🌐 Starting frontend server on port 8001..."
-	@echo "📁 Frontend will be available at http://localhost:8001/frontend.html"
+	@echo "📁 Frontend will be available at http://localhost:8001"
 	@echo "🔗 API server should be running on http://localhost:8000"
 	@echo "⏹️  Press Ctrl+C to stop the server"
-	python3 serve_frontend.py
-
+	@if [ -f .env ]; then export $$(cat .env | xargs); fi && API_BASE_URL=$${API_BASE_URL:-http://localhost:8000} python3 serve_frontend.py
 
 
 # Run integration test for dit package
@@ -87,6 +85,9 @@ svc-uninstall:
 
 svc-restart:
 	sudo systemctl restart softpack-mcp
+
+svc-stop:
+	sudo systemctl stop softpack-mcp
 
 svc-logs:
 	journalctl -u softpack-mcp -f --no-pager

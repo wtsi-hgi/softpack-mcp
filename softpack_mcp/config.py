@@ -35,6 +35,7 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "env_prefix": "SOFTPACK_",
         "case_sensitive": False,
+        "extra": "ignore",  # Ignore extra fields not defined in the model
     }
 
 
