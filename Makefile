@@ -15,6 +15,10 @@ help:
 init:
 	@echo "🚀 Initializing project..."
 	@echo "📦 Installing dependencies with uv..."
+	# check if uv is in path, if not set it
+	if ! command -v uv &> /dev/null; then
+		export PATH="/home/ubuntu/.local/bin:$PATH"
+	fi
 	uv sync --dev
 	@echo "🔧 Setting up pre-commit hooks..."
 	uv run pre-commit install

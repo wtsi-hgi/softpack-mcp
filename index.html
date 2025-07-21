@@ -1537,9 +1537,12 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
         margin: 15px 0;
         max-height: 300px;
         overflow-y: auto;
+        overflow-x: auto;
         font-family: "Courier New", monospace;
         font-size: 12px;
         line-height: 1.4;
+        word-wrap: break-word;
+        white-space: pre-wrap;
       }
 
       .stream-output h4 {
@@ -1881,21 +1884,13 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
             </button>
           </div>
 
-          <div x-show="apiResults.pypiResult" class="info-box">
-            <div x-show="apiResults.pypiResult && apiResults.pypiResult.success" class="success-box">
-              <strong>✅ PyPI Package Created Successfully!</strong><br />
-              Package:
-              <span x-text="apiResults.pypiResult && apiResults.pypiResult.package_name"></span><br />
-              <span x-show="apiResults.pypiResult && apiResults.pypiResult.recipe_path">
-                Recipe:
-                <span x-text="apiResults.pypiResult && apiResults.pypiResult.recipe_path"></span>
-              </span>
-            </div>
-            <div x-show="apiResults.pypiResult && !apiResults.pypiResult.success" class="warning-box">
-              <strong>❌ PyPI Package Creation Failed</strong><br />
-              Error:
-              <span x-text="apiResults.pypiResult && apiResults.pypiResult.message"></span>
-            </div>
+          <div x-show="apiResults.pypiResult && apiResults.pypiResult.success" class="success-box">
+            <strong>✅ PyPI Package Created Successfully!</strong><br />
+          </div>
+          <div x-show="apiResults.pypiResult && !apiResults.pypiResult.success" class="warning-box">
+            <strong>❌ PyPI Package Creation Failed</strong><br />
+            Error:
+            <span x-text="apiResults.pypiResult && apiResults.pypiResult.message"></span>
           </div>
 
           <div class="input-group">
@@ -2431,13 +2426,11 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
               </button>
             </div>
 
-            <div x-show="apiResults.uninstallResult" class="info-box">
-              <div x-show="apiResults.uninstallResult && apiResults.uninstallResult.success" class="success-box"><strong>✅ Package Uninstalled Successfully!</strong><br /></div>
-              <div x-show="apiResults.uninstallResult && !apiResults.uninstallResult.success" class="warning-box">
-                <strong>❌ Package Uninstall Failed</strong><br />
-                Error:
-                <span x-text="apiResults.uninstallResult && apiResults.uninstallResult.message"></span>
-              </div>
+            <div x-show="apiResults.uninstallResult && apiResults.uninstallResult.success" class="success-box"><strong>✅ Package Uninstalled Successfully!</strong><br /></div>
+            <div x-show="apiResults.uninstallResult && !apiResults.uninstallResult.success" class="warning-box">
+              <strong>❌ Package Uninstall Failed</strong><br />
+              Error:
+              <span x-text="apiResults.uninstallResult && apiResults.uninstallResult.message"></span>
             </div>
 
             <div class="warning-box">
