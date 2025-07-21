@@ -112,6 +112,7 @@ async def install_package(
             message=result.message,
             package_name=request.package_name,
             version=request.version or "latest",
+            install_digest=result.details.get("install_digest") if result.details else None,
             install_details=result.details,
         )
     except Exception as e:
@@ -121,6 +122,7 @@ async def install_package(
             message=f"Installation failed: {str(e)}",
             package_name=request.package_name,
             version=request.version or "latest",
+            install_digest=None,
             install_details={"error": str(e)},
         )
 
@@ -419,7 +421,8 @@ async def validate_package(
         result = await spack.validate_package(
             package_name=request.package_name,
             package_type=request.package_type,
-            hash_selection=request.hash_selection,
+            installation_digest=request.installation_digest,
+            custom_validation_script=request.custom_validation_script,
             session_id=request.session_id,
         )
         return result
@@ -432,6 +435,61 @@ async def validate_package(
             package_type=request.package_type,
             validation_command="",
             validation_details={"error": str(e)},
+        )
+
+
+@router.post("/validate/stream", operation_id="validate_package_stream")
+async def validate_package_stream(
+    request: SpackValidateRequest, spack: SpackService = Depends(get_spack_service)
+) -> StreamingResponse:
+    """
+    Validate a spack package installation with streaming output.
+
+    This endpoint executes singularity-based validation commands to test package functionality
+    and streams the results in real-time.
+
+    Args:
+        request: Package validation parameters
+
+    Returns:
+        Streaming validation results
+    """
+    try:
+        from ..models.responses import SpackValidationStreamResult
+
+        async def generate_stream():
+            async for result in spack.validate_package_stream(
+                package_name=request.package_name,
+                package_type=request.package_type,
+                installation_digest=request.installation_digest,
+                custom_validation_script=request.custom_validation_script,
+                session_id=request.session_id,
+            ):
+                yield f"data: {result.model_dump_json()}\n\n"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/plain",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+    except Exception as e:
+        logger.exception("Failed to validate package with streaming", package=request.package_name, error=str(e))
+        # Return error as a single stream event
+        error_result = SpackValidationStreamResult(
+            type="error",
+            data=f"Validation failed: {str(e)}",
+            timestamp=time.time(),
+            package_name=request.package_name,
+            package_type=request.package_type,
+        )
+
+        async def generate_error_stream():
+            yield f"data: {error_result.model_dump_json()}\n\n"
+
+        return StreamingResponse(
+            generate_error_stream(),
+            media_type="text/plain",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
 

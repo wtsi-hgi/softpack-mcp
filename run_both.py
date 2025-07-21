@@ -8,7 +8,6 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 
 def signal_handler(sig, frame):
@@ -22,26 +21,20 @@ def main():
     print("🚀 Starting Softpack MCP - API + Frontend")
     print("=" * 50)
 
-    # Check if we're in the right directory
-    if not Path("frontend.html").exists():
-        print("❌ Error: frontend.html not found. Make sure you're in the project root.")
-        sys.exit(1)
-
     # Set up signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
 
     print("📋 Starting servers:")
     print("   🔗 API Server: http://localhost:8000")
-    print("   🌐 Frontend: http://localhost:8001/frontend.html")
-    print("   📖 API Docs: http://localhost:8000/docs")
+    print("   🌐 Frontend: http://localhost:8001")
     print("   ⏹️  Press Ctrl+C to stop both servers")
     print()
 
     try:
-        # Start API server in background
+        # Start API server in background (production mode)
         api_process = subprocess.Popen(
-            ["uv", "run", "uvicorn", "softpack_mcp.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
-            env={**os.environ, "SOFTPACK_DEBUG": "true"},
+            ["uv", "run", "uvicorn", "softpack_mcp.main:app", "--host", "0.0.0.0", "--port", "8000"],
+            env=os.environ,
         )
 
         # Give API server a moment to start

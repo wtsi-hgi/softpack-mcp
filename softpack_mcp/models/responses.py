@@ -14,6 +14,9 @@ class OperationResult(BaseModel):
     success: bool = Field(..., description="Whether the operation was successful")
     message: str = Field(..., description="Human readable message")
     details: dict[str, Any] | None = Field(None, description="Additional details")
+    detailed_failed_log: str | None = Field(
+        None, description="Full contents of spack-build-out.txt files if install failed"
+    )
 
 
 # Spack Response Models
@@ -81,7 +84,11 @@ class SpackInstallResult(OperationResult):
     package_name: str = Field(..., description="Name of the installed package")
     version: str = Field(..., description="Installed version")
     install_path: str | None = Field(None, description="Installation path")
+    install_digest: str | None = Field(None, description="Installation digest hash")
     install_details: dict[str, Any] | None = Field(None, description="Installation details")
+    detailed_failed_log: str | None = Field(
+        None, description="Full contents of spack-build-out.txt files if install failed"
+    )
 
 
 class SpackInstallStreamResult(BaseModel):
@@ -93,6 +100,10 @@ class SpackInstallStreamResult(BaseModel):
     package_name: str = Field(..., description="Name of the package being installed")
     version: str | None = Field(None, description="Package version being installed")
     success: bool | None = Field(None, description="Installation success status (only for complete events)")
+    install_digest: str | None = Field(None, description="Installation digest hash (only for complete events)")
+    detailed_failed_log: str | None = Field(
+        None, description="Full contents of spack-build-out.txt files if install failed (only for complete events)"
+    )
 
 
 class SpackSearchResult(BaseModel):
@@ -197,6 +208,18 @@ class SpackValidationResult(OperationResult):
     validation_details: dict[str, Any] | None = Field(None, description="Additional validation information")
 
 
+class SpackValidationStreamResult(BaseModel):
+    """Streaming result for spack package validation."""
+
+    type: str = Field(..., description="Type of stream event (output, error, complete)")
+    data: str = Field(..., description="Stream data content")
+    timestamp: float = Field(..., description="Unix timestamp of the event")
+    package_name: str = Field(..., description="Name of the package being validated")
+    package_type: str = Field(..., description="Type of package being validated")
+    success: bool | None = Field(None, description="Validation success status (only for complete events)")
+    validation_command: str | None = Field(None, description="Command used for validation (only for complete events)")
+
+
 class GitCommitInfoResult(OperationResult):
     """Result of getting git commit information."""
 
@@ -213,6 +236,7 @@ class GitPullRequestResult(OperationResult):
     branch_name: str | None = Field(None, description="Created branch name")
     commit_message: str | None = Field(None, description="Commit message used")
     git_commands: list[str] = Field(default_factory=list, description="Git commands executed")
+    pr_url: str | None = Field(None, description="GitHub PR creation URL")
     pr_details: dict[str, Any] | None = Field(None, description="Additional PR creation details")
 
 
@@ -231,3 +255,12 @@ class GitPullResult(OperationResult):
     changes_pulled: bool = Field(..., description="Whether new changes were pulled")
     commit_hash: str | None = Field(None, description="Latest commit hash after pull")
     pull_details: dict[str, Any] | None = Field(None, description="Additional pull information")
+
+
+class AccessRequestResult(OperationResult):
+    """Result of collaborator access request."""
+
+    github_username: str = Field(..., description="GitHub username that requested access")
+    package_name: str = Field(..., description="Name of the package being worked on")
+    email_sent: bool = Field(..., description="Whether the access request email was sent successfully")
+    email_details: dict[str, Any] | None = Field(None, description="Additional email sending details")

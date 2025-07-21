@@ -47,19 +47,12 @@ def main():
     # Change to the script directory
     os.chdir(DIRECTORY)
 
-    # Check if frontend.html exists
-    if not Path("frontend.html").exists():
-        print("❌ Error: frontend.html not found in current directory")
-        print(f"   Current directory: {DIRECTORY}")
-        sys.exit(1)
-
     # Create server
     with socketserver.TCPServer(("", PORT), CustomHTTPRequestHandler) as httpd:
         print("🚀 Softpack Frontend Server starting...")
         print(f"   📁 Serving directory: {DIRECTORY}")
-        print(f"   🌐 Frontend URL: http://localhost:{PORT}/frontend.html")
+        print(f"   🌐 Frontend URL: http://localhost:{PORT}")
         print("   🔗 API URL: http://localhost:8000")
-        print("   📖 API Docs: http://localhost:8000/docs")
         print("   ⏹️  Press Ctrl+C to stop the server")
         print()
 

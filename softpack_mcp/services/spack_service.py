@@ -23,6 +23,7 @@ from ..models.responses import (
     SpackPackage,
     SpackUninstallAllResult,
     SpackValidationResult,
+    SpackValidationStreamResult,
     SpackVariant,
     SpackVersionInfo,
     SpackVersionsResult,
@@ -170,6 +171,126 @@ class SpackService:
 
         return await self._run_command_base(command, cwd=cwd, timeout=timeout, session_id=session_id)
 
+    def _extract_install_digest(self, output: str) -> str | None:
+        """
+        Extract the installation digest from spack install output.
+
+        Args:
+            output: The stdout/stderr output from spack install
+
+        Returns:
+            The digest hash if found, None otherwise
+        """
+        import re
+
+        # Normalize the output - handle different line endings and whitespace
+        output = output.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Pattern to match the installation path with digest
+        # Example: [+] /home/ubuntu/.spack/linux-ubuntu22.04-skylake_avx512/gcc-11.4.0/
+        # py-dit-1.5-gbt2624om2fm2r6lvokqqtuuw4tf2xcd
+        # We need to extract just the digest part (last 32-33 characters after the last dash)
+        # IMPORTANT: Look for the LAST occurrence since that's the package we're actually installing
+        pattern = r"\[\+\]\s+[^\s]+/([^/\s]+)"
+        matches = list(re.finditer(pattern, output))
+
+        if matches:
+            # Take the last match (most recent installation)
+            match = matches[-1]
+            full_package_name = match.group(1).strip()
+            logger.debug(
+                "Extracted package name from installation output (last occurrence)",
+                package_name=full_package_name,
+            )
+
+            # Extract the digest part (last 32-33 characters after the last dash)
+            # Example: py-dit-1.5-gbt2624om2fm2r6lvokqqtuuw4tf2xcd -> gbt2624om2fm2r6lvokqqtuuw4tf2xcd
+            parts = full_package_name.split("-")
+
+            if len(parts) > 1:
+                digest = parts[-1].strip()
+                logger.debug("Extracted digest candidate", digest=digest, length=len(digest))
+
+                # Verify it's exactly a 32-character alphanumeric string
+                if len(digest) == 32 and digest.isalnum():
+                    logger.info("Successfully extracted installation digest", digest=digest)
+                    return digest
+                else:
+                    logger.debug(
+                        "Digest validation failed", digest=digest, length=len(digest), isalnum=digest.isalnum()
+                    )
+            else:
+                logger.debug("Package name has insufficient parts for digest extraction", parts=parts)
+        else:
+            logger.debug("No [+] installation path found in output")
+
+        return None
+
+    def _extract_install_digest_robust(self, output: str) -> str | None:
+        """
+        More robust extraction of installation digest from spack install output.
+
+        This method tries multiple patterns and handles edge cases better.
+
+        Args:
+            output: The stdout/stderr output from spack install
+
+        Returns:
+            The digest hash if found, None otherwise
+        """
+        import re
+
+        # Normalize the output
+        output = output.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Try multiple patterns to find the installation path
+        patterns = [
+            # Pattern 1: Standard [+] /path/to/package format
+            r"\[\+\]\s+([^\s]+)$",
+            # Pattern 2: More flexible pattern that doesn't require end of line
+            r"\[\+\]\s+([^\s]+)",
+            # Pattern 3: Look for the last occurrence of [+] in the output
+            r"\[\+\]\s+([^\s]+)",
+        ]
+
+        for i, pattern in enumerate(patterns):
+            matches = list(re.finditer(pattern, output, re.MULTILINE))
+            if matches:
+                # Always take the last match (most recent installation)
+                match = matches[-1]
+                full_path = match.group(1).strip()
+
+                logger.debug(f"Pattern {i+1} matched", full_path=full_path)
+
+                # Extract the last component (package name with digest)
+                if "/" in full_path:
+                    package_name = full_path.split("/")[-1].strip()
+                else:
+                    package_name = full_path.strip()
+
+                logger.debug("Extracted package name", package_name=package_name)
+
+                # Extract the digest part (last 32-33 characters after the last dash)
+                parts = package_name.split("-")
+
+                if len(parts) > 1:
+                    digest = parts[-1].strip()
+                    logger.debug("Extracted digest candidate", digest=digest, length=len(digest))
+
+                    # Verify it's exactly a 32-character alphanumeric string
+                    if len(digest) == 32 and digest.isalnum():
+                        logger.info("Successfully extracted installation digest", digest=digest, pattern_used=i + 1)
+                        return digest
+                    else:
+                        logger.debug(
+                            "Digest validation failed", digest=digest, length=len(digest), isalnum=digest.isalnum()
+                        )
+                else:
+                    logger.debug("Package name has insufficient parts for digest extraction", parts=parts)
+
+        logger.debug("No valid installation digest found in output")
+        return None
+
     async def search_packages(
         self,
         query: str = "",
@@ -261,10 +382,80 @@ class SpackService:
         if result["success"]:
             logger.success("Package installed successfully", package=spec)
             message = f"Successfully installed {spec}"
+
+            # Extract installation digest from output
+            install_digest = self._extract_install_digest(result["stdout"] + result["stderr"])
+            if not install_digest:
+                # Try the more robust method as fallback
+                install_digest = self._extract_install_digest_robust(result["stdout"] + result["stderr"])
+
+            if install_digest:
+                logger.info("Extracted installation digest", package=spec, digest=install_digest)
+            detailed_failed_log = None
         else:
             logger.error("Package installation failed", package=spec, error=result["stderr"])
             message = f"Failed to install {spec}: {result['stderr']}"
+            install_digest = None
+            # Collect spack-build-out.txt from the build directory mentioned in output
+            detailed_failed_log = None
+            if session_id:
+                try:
+                    # Parse output to find spack stage directory paths
+                    full_output = result["stdout"] + result["stderr"]
+                    stage_paths = []
 
+                    # Look for spack-stage paths in the output
+                    import re
+
+                    stage_pattern = r"/tmp/[^/\s]*/spack-stage/spack-stage-[^/\s]+"
+                    matches = re.findall(stage_pattern, full_output)
+                    stage_paths.extend(matches)
+
+                    # Also look for other common spack build directory patterns
+                    build_pattern = r"/tmp/[^/\s]*/spack-build-[^/\s]+"
+                    matches = re.findall(build_pattern, full_output)
+                    stage_paths.extend(matches)
+
+                    # If no paths found in output, search for recent stage directories
+                    if not stage_paths:
+                        logger.warning("No stage paths found in output, searching filesystem")
+                        try:
+                            import glob
+
+                            recent_stages = glob.glob("/tmp/*/spack-stage/spack-stage-*")
+                            # Sort by modification time, get most recent ones
+                            recent_stages.sort(key=lambda x: Path(x).stat().st_mtime, reverse=True)
+                            stage_paths.extend(recent_stages[:5])  # Take 5 most recent
+                            logger.info(f"Found {len(stage_paths)} recent stage directories")
+                        except Exception as e:
+                            logger.warning(f"Failed to find recent stage directories: {e}")
+
+                    logger.info(f"Found {len(stage_paths)} spack stage/build directories in output")
+                    for path in stage_paths:
+                        logger.debug(f"Stage directory: {path}")
+
+                    logs = []
+                    for stage_path in stage_paths:
+                        log_file = Path(stage_path) / "spack-build-out.txt"
+                        if log_file.exists():
+                            try:
+                                content = log_file.read_text(encoding="utf-8")
+                                logs.append(f"===== {log_file} =====\n" + content)
+                                logger.info(f"Successfully read build log: {log_file} ({len(content)} chars)")
+                            except Exception as e:
+                                error_msg = f"===== {log_file} (error reading: {e}) =====\n"
+                                logs.append(error_msg)
+                                logger.warning(f"Failed to read build log {log_file}: {e}")
+                        else:
+                            logger.debug(f"Build log not found: {log_file}")
+
+                    if logs:
+                        detailed_failed_log = "\n\n".join(logs)
+                        logger.info(f"Collected {len(logs)} build logs for detailed_failed_log")
+                    else:
+                        logger.warning("No spack-build-out.txt files found in stage directories")
+                except Exception as e:
+                    logger.warning(f"Failed to collect spack-build-out.txt logs: {e}")
         return OperationResult(
             success=result["success"],
             message=message,
@@ -272,7 +463,9 @@ class SpackService:
                 "package": spec,
                 "stdout": result["stdout"],
                 "stderr": result["stderr"],
+                "install_digest": install_digest,
             },
+            detailed_failed_log=detailed_failed_log,
         )
 
     async def install_package_stream(
@@ -343,6 +536,7 @@ class SpackService:
 
             # Create a queue to collect output from both streams
             output_queue = asyncio.Queue()
+            all_output = []  # Collect all output for digest extraction
 
             # Function to read from a stream and put results in queue
             async def read_stream(stream: asyncio.StreamReader, stream_type: str):
@@ -350,10 +544,12 @@ class SpackService:
                     line = await stream.readline()
                     if not line:
                         break
+                    line_data = line.decode("utf-8").rstrip()
+                    all_output.append(line_data)
                     await output_queue.put(
                         SpackInstallStreamResult(
                             type=stream_type,
-                            data=line.decode("utf-8").rstrip(),
+                            data=line_data,
                             timestamp=time.time(),
                             package_name=package_name,
                             version=version,
@@ -383,10 +579,80 @@ class SpackService:
             if success:
                 logger.success("Package installed successfully", package=spec)
                 message = f"Successfully installed {spec}"
+
+                # Extract installation digest from all collected output
+                install_digest = self._extract_install_digest("\n".join(all_output))
+                if not install_digest:
+                    # Try the more robust method as fallback
+                    install_digest = self._extract_install_digest_robust("\n".join(all_output))
+
+                if install_digest:
+                    logger.info("Extracted installation digest", package=spec, digest=install_digest)
+                detailed_failed_log = None
             else:
                 logger.error("Package installation failed", package=spec, returncode=returncode)
                 message = f"Failed to install {spec} (return code: {returncode})"
+                install_digest = None
+                # Collect spack-build-out.txt from the build directory mentioned in output
+                detailed_failed_log = None
+                if session_id:
+                    try:
+                        # Parse output to find spack stage directory paths
+                        full_output = "\n".join(all_output)
+                        stage_paths = []
 
+                        # Look for spack-stage paths in the output
+                        import re
+
+                        stage_pattern = r"/tmp/[^/\s]*/spack-stage/spack-stage-[^/\s]+"
+                        matches = re.findall(stage_pattern, full_output)
+                        stage_paths.extend(matches)
+
+                        # Also look for other common spack build directory patterns
+                        build_pattern = r"/tmp/[^/\s]*/spack-build-[^/\s]+"
+                        matches = re.findall(build_pattern, full_output)
+                        stage_paths.extend(matches)
+
+                        # If no paths found in output, search for recent stage directories
+                        if not stage_paths:
+                            logger.warning("No stage paths found in output, searching filesystem")
+                            try:
+                                import glob
+
+                                recent_stages = glob.glob("/tmp/*/spack-stage/spack-stage-*")
+                                # Sort by modification time, get most recent ones
+                                recent_stages.sort(key=lambda x: Path(x).stat().st_mtime, reverse=True)
+                                stage_paths.extend(recent_stages[:5])  # Take 5 most recent
+                                logger.info(f"Found {len(stage_paths)} recent stage directories")
+                            except Exception as e:
+                                logger.warning(f"Failed to find recent stage directories: {e}")
+
+                        logger.info(f"Found {len(stage_paths)} spack stage/build directories in output")
+                        for path in stage_paths:
+                            logger.debug(f"Stage directory: {path}")
+
+                        logs = []
+                        for stage_path in stage_paths:
+                            log_file = Path(stage_path) / "spack-build-out.txt"
+                            if log_file.exists():
+                                try:
+                                    content = log_file.read_text(encoding="utf-8")
+                                    logs.append(f"===== {log_file} =====\n" + content)
+                                    logger.info(f"Successfully read build log: {log_file} ({len(content)} chars)")
+                                except Exception as e:
+                                    error_msg = f"===== {log_file} (error reading: {e}) =====\n"
+                                    logs.append(error_msg)
+                                    logger.warning(f"Failed to read build log {log_file}: {e}")
+                            else:
+                                logger.debug(f"Build log not found: {log_file}")
+
+                        if logs:
+                            detailed_failed_log = "\n\n".join(logs)
+                            logger.info(f"Collected {len(logs)} build logs for detailed_failed_log")
+                        else:
+                            logger.warning("No spack-build-out.txt files found in stage directories")
+                    except Exception as e:
+                        logger.warning(f"Failed to collect spack-build-out.txt logs: {e}")
             yield SpackInstallStreamResult(
                 type="complete",
                 data=message,
@@ -394,6 +660,8 @@ class SpackService:
                 package_name=package_name,
                 version=version,
                 success=success,
+                install_digest=install_digest,
+                detailed_failed_log=detailed_failed_log if not success else None,
             )
 
         except Exception as e:
@@ -1244,24 +1512,53 @@ class SpackService:
                         break
 
         if package_name and working_dir:
-            recipe_path = str((working_dir / "packages" / package_name / "package.py").relative_to(session_dir))
+            recipe_path = str((working_dir / "packages" / package_name / "package.py").relative_to(working_dir))
 
-        logger.success("Created recipe from URL", url=url, package_name=package_name)
+        # Remove Spack boilerplate from generated recipes
+        import re
+
+        boilerplate_removed = 0
+        if working_dir and (working_dir / "packages").exists():
+            package_py_files = list((working_dir / "packages").rglob("package.py"))
+            # Improved regex: match any dashed block anywhere in the file
+            pattern = r"(?ms)^# -{10,}\n(?:.*?\n)*?# -{10,}(?:\n|$)"
+            for pyfile in package_py_files:
+                try:
+                    content = pyfile.read_text(encoding="utf-8")
+                    logger.debug(f"Before boilerplate removal ({pyfile}):\n{content[:200]}")
+                    content_cleaned, n = re.subn(pattern, "", content)
+                    logger.debug(f"After boilerplate removal ({pyfile}):\n{content_cleaned[:200]}")
+                    if n > 0:
+                        logger.info(f"Removed {n} Spack boilerplate dashed block(s) from {pyfile}")
+                        pyfile.write_text(content_cleaned, encoding="utf-8")
+                        boilerplate_removed += n
+                except Exception as e:
+                    logger.warning(f"Failed to remove boilerplate from {pyfile}: {e}")
+
+        logger.success(
+            "Created recipe from URL", url=url, package_name=package_name, boilerplate_removed=boilerplate_removed
+        )
         return SpackCreateFromUrlResult(
             success=True,
             message=f"Successfully created recipe from {url}"
-            + (f" for package {package_name}" if package_name else ""),
+            + (f" for package {package_name}" if package_name else "")
+            + (f" (removed {boilerplate_removed} boilerplate block(s))" if boilerplate_removed > 0 else ""),
             url=url,
             package_name=package_name,
             recipe_path=recipe_path,
-            creation_details={"stdout": result["stdout"], "stderr": result["stderr"]},
+            creation_details={
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+                "boilerplate_removed": boilerplate_removed,
+            },
         )
 
     async def validate_package(
         self,
         package_name: str,
         package_type: str = "python",
-        hash_selection: str | None = None,
+        installation_digest: str | None = None,
+        custom_validation_script: str | None = None,
         session_id: str | None = None,
     ) -> SpackValidationResult:
         """
@@ -1270,39 +1567,91 @@ class SpackService:
         Args:
             package_name: Package name to validate
             package_type: Type of package (python, r, other)
-            hash_selection: Specific hash to use if multiple packages match
+            installation_digest: Installation digest hash from the installation step
+            custom_validation_script: Custom validation script to use instead of default
             session_id: Optional session ID for isolated execution
 
         Returns:
             Package validation result
         """
         logger.info("Validating package", package=package_name, type=package_type, session_id=session_id)
+        logger.info(
+            "Received installation_digest parameter",
+            installation_digest=installation_digest,
+            type=type(installation_digest),
+        )
 
-        # Build validation script based on package type
-        validation_scripts = {
-            "python": f'python -c "import {package_name}"',
-            "r": f'Rscript -e "library({package_name})"',
-            "other": "# Check package documentation for validation",
-        }
-        validation_script = validation_scripts.get(package_type, validation_scripts["other"])
-
-        # Build load command
-        if hash_selection:
-            load_spec = f"/{hash_selection}"
+        # Build validation script based on package type or use custom script
+        if custom_validation_script:
+            validation_script = custom_validation_script
         else:
-            # Determine recipe name based on package type
+            validation_scripts = {
+                "python": f'python -c "import {package_name}"',
+                "r": f'Rscript -e "library({package_name})"',
+                "other": "# Check package documentation for validation",
+            }
+            validation_script = validation_scripts.get(package_type, validation_scripts["other"])
+
+        # Build load command using installation digest if provided
+        logger.info(
+            "Building load spec",
+            installation_digest=installation_digest,
+            package_name=package_name,
+            package_type=package_type,
+        )
+
+        if installation_digest:
+            # For spack load, use the first 7 characters of the digest
+            # This is the standard spack convention for short hashes
+            load_spec = f"/{installation_digest[:7]}"
+            logger.info(
+                "Using first 7 chars of installation digest for load spec",
+                load_spec=load_spec,
+                full_digest=installation_digest,
+            )
+        else:
+            # Fallback to recipe name if no digest provided
             prefixes = {"python": "py-", "r": "r-", "other": ""}
             recipe_name = prefixes[package_type] + package_name
             load_spec = recipe_name
+            logger.info("Using recipe name for load spec", load_spec=load_spec)
 
-        # Build singularity command
-        validation_command = (
-            f"singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c "
-            f"'source <(/opt/spack/bin/spack load --sh {load_spec}); {validation_script}'"
-        )
+        # Build validation command with session isolation if needed
+        if session_id:
+            session_manager = get_session_manager()
+            try:
+                session_dir = session_manager.get_session_dir(session_id)
+                if session_dir is None:
+                    raise ValueError(f"Session {session_id} not found")
+
+                # Build singularity exec command with session bindings
+                validation_command = (
+                    f"singularity exec --bind /usr/bin/zsh --bind /mnt/data "
+                    f"--bind {session_dir}/repos.yaml:/home/ubuntu/.spack/repos.yaml "
+                    f"/home/ubuntu/spack.sif bash -c "
+                    f"'source <(/opt/spack/bin/spack load --sh {load_spec}); {validation_script}'"
+                )
+                cmd = ["bash", "-c", validation_command]
+            except ValueError as e:
+                logger.error("Failed to get session directory", session_id=session_id, error=str(e))
+                return SpackValidationResult(
+                    success=False,
+                    message=f"Session error: {str(e)}",
+                    package_name=package_name,
+                    package_type=package_type,
+                    validation_command="",
+                    validation_output="",
+                    validation_details={"error": str(e)},
+                )
+        else:
+            # Build singularity command without session isolation
+            validation_command = (
+                f"singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c "
+                f"'source <(/opt/spack/bin/spack load --sh {load_spec}); {validation_script}'"
+            )
+            cmd = ["bash", "-c", validation_command]
 
         # Execute validation
-        cmd = ["bash", "-c", validation_command]
         result = await self._run_command(cmd, timeout=300)
 
         success = result["success"]
@@ -1313,20 +1662,210 @@ class SpackService:
             logger.error("Package validation failed", package=package_name, error=result["stderr"])
             message = f"Package {package_name} validation failed: {result['stderr']}"
 
+        # Build the actual command that was executed for logging
+        actual_command = " ".join(cmd) if isinstance(cmd, list) else cmd
+
         return SpackValidationResult(
             success=success,
             message=message,
             package_name=package_name,
             package_type=package_type,
-            validation_command=validation_command,
+            validation_command=actual_command,
             validation_output=result["stdout"],
             validation_details={
                 "stdout": result["stdout"],
                 "stderr": result["stderr"],
-                "hash_selection": hash_selection,
-                "recipe_name": load_spec,
+                "installation_digest": installation_digest,
+                "custom_validation_script": custom_validation_script,
+                "load_spec": load_spec,
+                "session_id": session_id,
             },
         )
+
+    async def validate_package_stream(
+        self,
+        package_name: str,
+        package_type: str = "python",
+        installation_digest: str | None = None,
+        custom_validation_script: str | None = None,
+        session_id: str | None = None,
+    ) -> AsyncGenerator[SpackValidationStreamResult, None]:
+        """
+        Validate a spack package installation with streaming output.
+
+        Args:
+            package_name: Package name to validate
+            package_type: Type of package (python, r, other)
+            installation_digest: Installation digest hash from the installation step
+            custom_validation_script: Custom validation script to use instead of default
+            session_id: Optional session ID for isolated execution
+
+        Yields:
+            Streaming validation results
+        """
+        logger.info("Starting streaming validation", package=package_name, type=package_type, session_id=session_id)
+        logger.info(
+            "Received installation_digest parameter",
+            installation_digest=installation_digest,
+            type=type(installation_digest),
+        )
+
+        # Send initial status
+        yield SpackValidationStreamResult(
+            type="start",
+            data=f"Starting validation of {package_name}" + (f" (session: {session_id})" if session_id else ""),
+            timestamp=time.time(),
+            package_name=package_name,
+            package_type=package_type,
+        )
+
+        # Build validation script based on package type or use custom script
+        if custom_validation_script:
+            validation_script = custom_validation_script
+        else:
+            validation_scripts = {
+                "python": f'python -c "import {package_name}"',
+                "r": f'Rscript -e "library({package_name})"',
+                "other": "# Check package documentation for validation",
+            }
+            validation_script = validation_scripts.get(package_type, validation_scripts["other"])
+
+        # Build load command using installation digest if provided
+        logger.info(
+            "Building load spec for streaming validation",
+            installation_digest=installation_digest,
+            package_name=package_name,
+            package_type=package_type,
+        )
+
+        if installation_digest:
+            # For spack load, use the first 7 characters of the digest
+            # This is the standard spack convention for short hashes
+            load_spec = f"/{installation_digest[:7]}"
+            logger.info(
+                "Using first 7 chars of installation digest for load spec",
+                load_spec=load_spec,
+                full_digest=installation_digest,
+            )
+        else:
+            # Fallback to recipe name if no digest provided
+            prefixes = {"python": "py-", "r": "r-", "other": ""}
+            recipe_name = prefixes[package_type] + package_name
+            load_spec = recipe_name
+            logger.info("Using recipe name for load spec", load_spec=load_spec)
+
+        # Build validation command with session isolation if needed
+        if session_id:
+            session_manager = get_session_manager()
+            try:
+                session_dir = session_manager.get_session_dir(session_id)
+                if session_dir is None:
+                    raise ValueError(f"Session {session_id} not found")
+
+                # Build singularity exec command with session bindings
+                validation_command = (
+                    f"singularity exec --bind /usr/bin/zsh --bind /mnt/data "
+                    f"--bind {session_dir}/repos.yaml:/home/ubuntu/.spack/repos.yaml "
+                    f"/home/ubuntu/spack.sif bash -c "
+                    f"'source <(/opt/spack/bin/spack load --sh {load_spec}); {validation_script}'"
+                )
+                cmd = ["bash", "-c", validation_command]
+            except ValueError as e:
+                logger.error("Failed to get session directory", session_id=session_id, error=str(e))
+                yield SpackValidationStreamResult(
+                    type="error",
+                    data=f"Session error: {str(e)}",
+                    timestamp=time.time(),
+                    package_name=package_name,
+                    package_type=package_type,
+                )
+                return
+        else:
+            # Build singularity command without session isolation
+            validation_command = (
+                f"singularity exec --bind /mnt/data /home/ubuntu/spack.sif bash -c "
+                f"'source <(/opt/spack/bin/spack load --sh {load_spec}); {validation_script}'"
+            )
+            cmd = ["bash", "-c", validation_command]
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            # Create a queue to collect output from both streams
+            output_queue = asyncio.Queue()
+            all_output = []  # Collect all output
+
+            # Function to read from a stream and put results in queue
+            async def read_stream(stream: asyncio.StreamReader, stream_type: str):
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    line_data = line.decode("utf-8").rstrip()
+                    all_output.append(line_data)
+                    await output_queue.put(
+                        SpackValidationStreamResult(
+                            type=stream_type,
+                            data=line_data,
+                            timestamp=time.time(),
+                            package_name=package_name,
+                            package_type=package_type,
+                        )
+                    )
+
+            # Start reading both streams concurrently
+            stdout_task = asyncio.create_task(read_stream(process.stdout, "output"))
+            stderr_task = asyncio.create_task(read_stream(process.stderr, "error"))
+
+            # Yield output as it becomes available
+            while True:
+                try:
+                    # Wait for output with a timeout
+                    result = await asyncio.wait_for(output_queue.get(), timeout=0.1)
+                    yield result
+                except asyncio.TimeoutError:
+                    # Check if both streams are done
+                    if stdout_task.done() and stderr_task.done():
+                        break
+
+            # Wait for process to complete
+            returncode = await process.wait()
+
+            # Send completion status
+            success = returncode == 0
+            if success:
+                logger.success("Package validation successful", package=package_name)
+                message = f"Package {package_name} validation successful"
+            else:
+                logger.error("Package validation failed", package=package_name, returncode=returncode)
+                message = f"Package {package_name} validation failed (return code: {returncode})"
+
+            # Build the actual command that was executed for logging
+            actual_command = " ".join(cmd) if isinstance(cmd, list) else cmd
+
+            yield SpackValidationStreamResult(
+                type="complete",
+                data=message,
+                timestamp=time.time(),
+                package_name=package_name,
+                package_type=package_type,
+                success=success,
+                validation_command=actual_command,
+            )
+
+        except Exception as e:
+            logger.exception("Streaming validation failed", package=package_name, error=str(e))
+            yield SpackValidationStreamResult(
+                type="error",
+                data=f"Validation failed: {str(e)}",
+                timestamp=time.time(),
+                package_name=package_name,
+                package_type=package_type,
+            )
 
     async def uninstall_package_with_dependents(
         self,

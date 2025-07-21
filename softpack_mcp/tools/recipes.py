@@ -68,6 +68,7 @@ def _validate_recipe_content(content: str, package_name: str) -> RecipeValidatio
 
             # Check for class definition
             class_found = False
+            matching_class_found = False
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef):
                     class_found = True
@@ -75,11 +76,19 @@ def _validate_recipe_content(content: str, package_name: str) -> RecipeValidatio
                     # Convert package-name to PackageName (PascalCase, no hyphens/underscores)
                     parts = package_name.replace("-", "_").replace(".", "_").split("_")
                     expected_class = "".join(part.capitalize() for part in parts if part)
-                    if node.name.lower() != expected_class.lower():
-                        warnings.append(f"Class name '{node.name}' doesn't match expected pattern '{expected_class}'")
+                    if node.name.lower() == expected_class.lower():
+                        matching_class_found = True
+                    else:
+                        # Only warn about non-matching classes if we haven't found a matching one yet
+                        if not matching_class_found:
+                            warnings.append(
+                                f"Class name '{node.name}' doesn't match expected pattern '{expected_class}'"
+                            )
 
             if not class_found:
                 errors.append("No package class definition found")
+            elif not matching_class_found:
+                warnings.append(f"No class found matching expected package name pattern '{expected_class}'")
 
             # Check for common required methods/attributes (basic validation)
             content_lower = content.lower()
@@ -189,31 +198,40 @@ async def create_recipe(
                 )
                 raise HTTPException(status_code=500, detail=f"Failed to generate recipe: {result['stderr']}")
 
-            # Check if the recipe was created in session location
-            if session_recipe_path.exists():
-                logger.success("Generated recipe in session", session_id=session_id, package_name=package_name)
-                action = "generated_in_session"
+            # After spack create, search for all package.py files in the session's spack-repo/packages directory
+            import re
+
+            package_py_files = list((session_dir / "spack-repo" / "packages").rglob("package.py"))
+            found_main_recipe = None
+            # Improved regex: match any dashed block anywhere in the file
+            pattern = r"(?ms)^# -{10,}\n(?:.*?\n)*?# -{10,}(?:\n|$)"
+            for pyfile in package_py_files:
+                content = pyfile.read_text(encoding="utf-8")
+                logger.debug(f"Before removal ({pyfile}):\n{content[:200]}")
+                content_cleaned, n = re.subn(pattern, "", content)
+                logger.debug(f"After removal ({pyfile}):\n{content_cleaned[:200]}")
+                if n > 0:
+                    logger.info(f"Removed {n} Spack boilerplate dashed block(s) from {pyfile}")
+                pyfile.write_text(content_cleaned, encoding="utf-8")
+                if pyfile == session_recipe_path:
+                    found_main_recipe = pyfile
+
+            # If the main recipe was not found, try to find it among discovered files
+            if not found_main_recipe and package_py_files:
+                found_main_recipe = package_py_files[0]
+
+            if found_main_recipe:
+                logger.success(
+                    "Generated recipe and removed boilerplate", session_id=session_id, package_name=package_name
+                )
+                action = "generated_and_cleaned"
+                file_path = str(found_main_recipe.relative_to(session_dir))
+                size = found_main_recipe.stat().st_size
             else:
-                # Check if it was created in global location and move it
-                if global_recipe_path.exists():
-                    _ensure_package_directory(session_recipe_path)
-                    shutil.move(str(global_recipe_path), str(session_recipe_path))
-
-                    # Try to remove empty global package directory
-                    try:
-                        global_recipe_path.parent.rmdir()
-                    except OSError:
-                        pass  # Directory not empty or other error
-
-                    logger.success(
-                        "Generated recipe and moved to session", session_id=session_id, package_name=package_name
-                    )
-                    action = "generated_and_moved"
-                else:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Recipe generation succeeded but no recipe file found for '{package_name}'",
-                    )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Recipe generation succeeded but no recipe file found for '{package_name}'",
+                )
 
             return OperationResult(
                 success=True,
@@ -221,8 +239,8 @@ async def create_recipe(
                 details={
                     "package_name": package_name,
                     "action": action,
-                    "file_path": str(session_recipe_path.relative_to(session_dir)),
-                    "size": session_recipe_path.stat().st_size,
+                    "file_path": file_path,
+                    "size": size,
                     "spack_output": result["stdout"],
                 },
             )

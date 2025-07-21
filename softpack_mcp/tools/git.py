@@ -49,21 +49,13 @@ async def get_git_commit_info(
     request: GitCommitInfoRequest, git_service: GitService = Depends(get_git_service)
 ) -> GitCommitInfoResult:
     """
-    Get git commit information for a repository.
-
-    This endpoint clones a repository and extracts the latest commit hash and date.
-    Used for creating spack recipes that reference git commits instead of releases.
-
-    Args:
-        request: Git commit info request parameters
-
-    Returns:
-        Git commit information result with status and details.
+    Get git commit information for a repository and update the session recipe.
     """
     try:
         result = await git_service.get_commit_info(
             repo_url=request.repo_url,
             session_id=request.session_id,
+            package_name=request.package_name,
         )
         return result
     except Exception as e:

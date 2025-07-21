@@ -10,6 +10,7 @@ from fastapi_mcp import FastApiMCP
 from loguru import logger
 
 from .config import get_settings
+from .tools.access import router as access_router
 from .tools.git import router as git_router
 from .tools.recipes import router as recipes_router
 from .tools.sessions import router as sessions_router
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     setup_exception_handlers(app)
 
     # Include routers
+    app.include_router(access_router, prefix="/access", tags=["access"])
     app.include_router(spack_router, prefix="/spack", tags=["spack"])
     app.include_router(git_router, prefix="/git", tags=["git"])
     app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])

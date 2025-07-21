@@ -1,4 +1,4 @@
-.PHONY: init debug prod clean help frontend both
+.PHONY: init debug prod clean help frontend both test-integration
 
 # Default target
 help:
@@ -8,6 +8,7 @@ help:
 	@echo "  prod     - Run the server in production mode"
 	@echo "  frontend - Serve the HTML frontend on port 8001"
 	@echo "  both     - Run both API (8000) and frontend (8001) servers"
+	@echo "  test-integration - Run the dit package integration test"
 	@echo "  clean    - Clean cache and temporary files"
 	@echo "  help     - Show this help message"
 
@@ -36,11 +37,13 @@ debug:
 	@echo "📖 API docs at http://localhost:8000/docs"
 	@if [ -f .env ]; then export $$(cat .env | xargs); fi && SOFTPACK_DEBUG=true uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Run server in production mode
+# Run server in production mode (both backend and frontend)
 prod:
-	@echo "🚀 Starting server in production mode..."
-	@echo "🌐 Server will be available at http://0.0.0.0:8000"
-	@if [ -f .env ]; then export $$(cat .env | xargs); fi && uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000
+	@echo "🚀 Starting Softpack MCP in production mode..."
+	@echo "🔗 API Server: http://0.0.0.0:8000"
+	@echo "🌐 Frontend: http://0.0.0.0:8001/frontend.html"
+	@echo "📖 API Docs: http://0.0.0.0:8000/docs"
+	@if [ -f .env ]; then export $$(cat .env | xargs); fi && python3 run_both.py
 
 # Clean cache and temporary files
 clean:
@@ -61,13 +64,14 @@ frontend:
 	@echo "⏹️  Press Ctrl+C to stop the server"
 	python3 serve_frontend.py
 
-# Run both API and frontend servers
-both:
-	@echo "🚀 Starting both API and frontend servers..."
-	@echo "🔗 API Server: http://localhost:8000"
-	@echo "🌐 Frontend: http://localhost:8001/frontend.html"
-	@echo "⏹️  Press Ctrl+C to stop both servers"
-	python3 run_both.py
+
+
+# Run integration test for dit package
+test-integration:
+	@echo "🧪 Running dit package integration test..."
+	@echo "📦 Testing full workflow: session → recipe → copy → build → validate"
+	@echo "⏱️  This may take several minutes..."
+	python3 run_integration_test.py
 
 svc-install:
 	sudo cp softpack-mcp.service /etc/systemd/system/

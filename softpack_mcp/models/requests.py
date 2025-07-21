@@ -79,7 +79,8 @@ class SpackValidateRequest(BaseModel):
 
     package_name: str = Field(..., description="Name of the package to validate")
     package_type: str = Field(default="python", description="Type of package (python, r, other)")
-    hash_selection: str | None = Field(None, description="Specific hash to use if multiple packages match")
+    installation_digest: str | None = Field(None, description="Installation digest hash from the installation step")
+    custom_validation_script: str | None = Field(None, description="Custom validation script to use instead of default")
     session_id: str | None = Field(None, description="Session ID for isolated execution")
 
 
@@ -88,6 +89,7 @@ class GitCommitInfoRequest(BaseModel):
 
     repo_url: str = Field(..., description="Repository URL to get commit info from")
     session_id: str | None = Field(None, description="Session ID for isolated execution")
+    package_name: str = Field(..., description="Name of the package to update/create in the session")
 
 
 class GitPullRequestRequest(BaseModel):
@@ -108,4 +110,12 @@ class SpackUninstallAllRequest(BaseModel):
     """Request to uninstall a spack package and all its dependents."""
 
     package_name: str = Field(..., description="Name of the package to uninstall")
+    session_id: str | None = Field(None, description="Session ID for isolated execution")
+
+
+class AccessRequestRequest(BaseModel):
+    """Request to request collaborator access to spack-repo."""
+
+    github_username: str = Field(..., description="GitHub username requesting access")
+    package_name: str = Field(..., description="Name of the package being worked on")
     session_id: str | None = Field(None, description="Session ID for isolated execution")
