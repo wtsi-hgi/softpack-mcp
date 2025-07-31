@@ -762,7 +762,7 @@ class SpackService:
                 )
 
             # Step 2: Find and move the created package to session directory (if session_id provided)
-            moved_to = None
+            moved_packages = []
             recipe_path = None
 
             if session_id:
@@ -787,45 +787,62 @@ class SpackService:
                     py_packages = list(packages_dir.glob("py-*"))
 
                 if py_packages:
-                    # Take the first matching package (there should only be one new one)
-                    source_package = py_packages[0]
-
-                    # Ensure session spack-repo packages directory exists
+                    # Move all created packages to session (PyPackageCreator can create multiple recipes)
                     session_packages_dir = session_dir / "spack-repo" / "packages"
                     session_packages_dir.mkdir(exist_ok=True)
 
-                    # Move to session spack-repo packages directory
-                    destination = session_packages_dir / source_package.name
+                    for source_package in py_packages:
+                        # Move to session spack-repo packages directory
+                        destination = session_packages_dir / source_package.name
 
-                    # Use mv command to move the directory
-                    mv_cmd = ["mv", str(source_package), str(destination)]
-                    mv_result = await self._run_command(mv_cmd, timeout=30)
+                        # Use mv command to move the directory
+                        mv_cmd = ["mv", str(source_package), str(destination)]
+                        mv_result = await self._run_command(mv_cmd, timeout=30)
 
-                    if mv_result["success"]:
-                        moved_to = str(destination.relative_to(session_dir))
-                        recipe_path = str(destination / "package.py")
+                        if mv_result["success"]:
+                            moved_packages.append(
+                                {
+                                    "name": source_package.name,
+                                    "path": str(destination.relative_to(session_dir)),
+                                    "recipe_path": str(destination / "package.py"),
+                                }
+                            )
+                            logger.info(
+                                "Package moved to session",
+                                package=source_package.name,
+                                source=str(source_package),
+                                destination=str(destination),
+                            )
+                        else:
+                            logger.error(
+                                "Failed to move package to session",
+                                package=source_package.name,
+                                error=mv_result["stderr"],
+                            )
+
+                    if moved_packages:
+                        # Set the main package as the primary one
+                        main_package = next(
+                            (p for p in moved_packages if p["name"] == f"py-{package_name}"), moved_packages[0]
+                        )
+                        moved_to = main_package["path"]
+                        recipe_path = main_package["recipe_path"]
+
                         logger.info(
-                            "Package moved to session",
-                            package=package_name,
-                            source=str(source_package),
-                            destination=str(destination),
+                            "All packages moved to session",
+                            total_moved=len(moved_packages),
+                            packages=[p["name"] for p in moved_packages],
                         )
                     else:
-                        logger.error(
-                            "Failed to move package to session", package=package_name, error=mv_result["stderr"]
-                        )
+                        logger.error("Failed to move any packages to session", package=package_name)
                         return SpackCreatePypiResult(
                             success=False,
-                            message=(
-                                f"PyPackageCreator created the package but failed to move it to session: "
-                                f"{mv_result['stderr']}"
-                            ),
+                            message="PyPackageCreator created packages but failed to move them to session",
                             package_name=package_name,
                             creation_details={
                                 "stdout": result["stdout"],
                                 "stderr": result["stderr"],
-                                "mv_error": mv_result["stderr"],
-                                "error": "Failed to move package to session",
+                                "error": "Failed to move packages to session",
                             },
                         )
                 else:
@@ -850,6 +867,7 @@ class SpackService:
                 package_name=package_name,
                 recipe_path=recipe_path,
                 moved_to=moved_to,
+                moved_packages=moved_packages if moved_packages else None,
                 creation_details={
                     "stdout": result["stdout"],
                     "stderr": result["stderr"],
@@ -904,10 +922,64 @@ class SpackService:
             # Convert package name for source directory (replace hyphens with underscores)
             replace_pkg = package_name.replace("-", "_")
 
-            # Source directory in builtin packages
-            src_dir = (
-                Path.home() / "work" / "spack-packages" / "repos" / "spack_repo" / "builtin" / "packages" / replace_pkg
-            )
+            # For Python packages, try different naming conventions
+            if package_name.startswith("py-"):
+                # Try the original name first (py-numpy -> py_numpy)
+                src_dir = (
+                    Path.home()
+                    / "work"
+                    / "spack-packages"
+                    / "repos"
+                    / "spack_repo"
+                    / "builtin"
+                    / "packages"
+                    / replace_pkg
+                )
+
+                # If not found, try without py- prefix (py-numpy -> numpy)
+                if not src_dir.exists():
+                    alt_replace_pkg = package_name.replace("py-", "").replace("-", "_")
+                    src_dir = (
+                        Path.home()
+                        / "work"
+                        / "spack-packages"
+                        / "repos"
+                        / "spack_repo"
+                        / "builtin"
+                        / "packages"
+                        / alt_replace_pkg
+                    )
+                    logger.info(f"Trying alternative package name: '{package_name}' -> '{alt_replace_pkg}'")
+
+                    # If still not found, try with just the base name (py-numpy -> numpy)
+                    if not src_dir.exists():
+                        base_name = package_name.replace("py-", "")
+                        src_dir = (
+                            Path.home()
+                            / "work"
+                            / "spack-packages"
+                            / "repos"
+                            / "spack_repo"
+                            / "builtin"
+                            / "packages"
+                            / base_name
+                        )
+                        logger.info(f"Trying base package name: '{package_name}' -> '{base_name}'")
+            else:
+                # Source directory in builtin packages
+                src_dir = (
+                    Path.home()
+                    / "work"
+                    / "spack-packages"
+                    / "repos"
+                    / "spack_repo"
+                    / "builtin"
+                    / "packages"
+                    / replace_pkg
+                )
+
+            logger.info(f"Looking for package '{package_name}' in source directory: {src_dir}")
+            logger.info(f"Converted package name: '{package_name}' -> '{replace_pkg}'")
 
             # Navigate to the spack directory and checkout the legacy commit
             spack_dir = Path.home() / "work" / "spack-packages"
@@ -944,13 +1016,96 @@ class SpackService:
 
             # Check if source package exists
             if not src_dir.exists():
-                logger.error("Source package not found", package=package_name, src_dir=str(src_dir))
-                return SpackCopyPackageResult(
-                    success=False,
-                    message=f"Source package '{package_name}' not found in builtin packages",
-                    package_name=package_name,
-                    copy_details={"error": "Source package not found", "src_dir": str(src_dir)},
-                )
+                logger.error("Source package not found in legacy commit", package=package_name, src_dir=str(src_dir))
+
+                # Try to find the package in the current spack repository with same naming logic
+                if package_name.startswith("py-"):
+                    # Try the original name first (py-numpy -> py_numpy)
+                    current_src_dir = (
+                        Path.home()
+                        / "work"
+                        / "spack-packages"
+                        / "repos"
+                        / "spack_repo"
+                        / "builtin"
+                        / "packages"
+                        / replace_pkg
+                    )
+
+                    # If not found, try without py- prefix (py-numpy -> numpy)
+                    if not current_src_dir.exists():
+                        alt_replace_pkg = package_name.replace("py-", "").replace("-", "_")
+                        current_src_dir = (
+                            Path.home()
+                            / "work"
+                            / "spack-packages"
+                            / "repos"
+                            / "spack_repo"
+                            / "builtin"
+                            / "packages"
+                            / alt_replace_pkg
+                        )
+                        logger.info(
+                            f"Trying alternative package name in current repo: '{package_name}' -> '{alt_replace_pkg}'"
+                        )
+
+                        # If still not found, try with just the base name (py-numpy -> numpy)
+                        if not current_src_dir.exists():
+                            base_name = package_name.replace("py-", "")
+                            current_src_dir = (
+                                Path.home()
+                                / "work"
+                                / "spack-packages"
+                                / "repos"
+                                / "spack_repo"
+                                / "builtin"
+                                / "packages"
+                                / base_name
+                            )
+                            logger.info(f"Trying base package name in current repo: '{package_name}' -> '{base_name}'")
+                else:
+                    current_src_dir = (
+                        Path.home()
+                        / "work"
+                        / "spack-packages"
+                        / "repos"
+                        / "spack_repo"
+                        / "builtin"
+                        / "packages"
+                        / replace_pkg
+                    )
+
+                if current_src_dir.exists():
+                    logger.info(f"Found package in current spack repository: {current_src_dir}")
+                    src_dir = current_src_dir
+                else:
+                    logger.error(
+                        "Source package not found in current spack repository either",
+                        package=package_name,
+                        current_src_dir=str(current_src_dir),
+                    )
+
+                    # Try to find the package in alternative locations
+                    packages_dir = (
+                        Path.home() / "work" / "spack-packages" / "repos" / "spack_repo" / "builtin" / "packages"
+                    )
+                    if packages_dir.exists():
+                        available_packages = [p.name for p in packages_dir.iterdir() if p.is_dir()]
+                        logger.info(f"Available packages in {packages_dir}: {available_packages}")
+
+                        # Try to find a similar package name
+                        similar_packages = [
+                            p for p in available_packages if package_name.replace("-", "_") in p or package_name in p
+                        ]
+                        if similar_packages:
+                            logger.info(f"Similar packages found: {similar_packages}")
+
+                    return SpackCopyPackageResult(
+                        success=False,
+                        message=f"Source package '{package_name}' not found in builtin packages",
+                        package_name=package_name,
+                        copy_details={"error": "Source package not found", "src_dir": str(src_dir)},
+                    )
 
             # Ensure destination directory exists
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -971,12 +1126,37 @@ class SpackService:
             # Copy package.py file
             shutil.copy2(src_package_py, dest_package_py)
 
-            # Copy any .patch files
-            patch_files = []
-            for patch_file in src_dir.glob("*.patch"):
-                dest_patch = dest_dir / patch_file.name
-                shutil.copy2(patch_file, dest_patch)
-                patch_files.append(patch_file.name)
+            # Copy all relevant files from the package directory
+            copied_files = []
+            logger.info(f"Source directory contents: {[item.name for item in src_dir.iterdir()]}")
+
+            for item in src_dir.iterdir():
+                if item.is_file():
+                    # Copy all files except package.py (already copied above)
+                    if item.name != "package.py":
+                        dest_file = dest_dir / item.name
+                        try:
+                            shutil.copy2(item, dest_file)
+                            copied_files.append(item.name)
+                            logger.info(f"Successfully copied file: {item.name} from {item} to {dest_file}")
+                        except Exception as e:
+                            logger.error(f"Failed to copy file {item.name}: {e}")
+                            # Continue with other files even if one fails
+                else:
+                    logger.debug(f"Skipping non-file item: {item.name} (type: {type(item)})")
+
+            logger.info(f"Total files copied: {len(copied_files)} - {copied_files}")
+
+            # Verify that patch files were copied
+            patch_files = [f for f in copied_files if f.endswith(".patch")]
+            if patch_files:
+                logger.info(f"Successfully copied patch files: {patch_files}")
+            else:
+                logger.warning("No patch files found in source directory")
+                # Check if there are any .patch files in the source that weren't copied
+                source_patch_files = [f.name for f in src_dir.iterdir() if f.is_file() and f.name.endswith(".patch")]
+                if source_patch_files:
+                    logger.error(f"Patch files exist in source but weren't copied: {source_patch_files}")
 
             # Apply the same modifications as in the .zshrc create function
             package_content = dest_package_py.read_text(encoding="utf-8")
@@ -1018,7 +1198,7 @@ class SpackService:
                 package=package_name,
                 src_dir=str(src_dir),
                 dest_dir=str(dest_dir),
-                patch_files=patch_files,
+                copied_files=copied_files,
             )
 
             return SpackCopyPackageResult(
@@ -1028,10 +1208,11 @@ class SpackService:
                 source_path=str(src_dir.relative_to(Path.home() / "work" / "spack-packages")),
                 destination_path=str(dest_dir.relative_to(session_dir)),
                 recipe_path=str(dest_package_py.relative_to(session_dir)),
+                copied_files=copied_files,
                 copy_details={
                     "src_dir": str(src_dir),
                     "dest_dir": str(dest_dir),
-                    "patch_files": patch_files,
+                    "copied_files": copied_files,
                     "legacy_commit": "78f95ff38d591cbe956a726f4a93f57d21840f86",
                     "git_checkout_success": True,
                     "modifications_applied": [

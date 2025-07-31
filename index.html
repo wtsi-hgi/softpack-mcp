@@ -455,13 +455,29 @@
             // Save the recovered session state
             this.saveSessionState();
 
-            // If we restored an existing session and we're on step 3, reload recipes to show existing work
-            if (sessionRestored && this.currentStep === 3) {
-              try {
-                await this.loadRecipes();
-              } catch (error) {
-                console.warn("Failed to load recipes after session restoration:", error);
+            // If we're on step 3, initialize ACE editor and load recipe content
+            if (this.currentStep === 3) {
+              // If we restored an existing session, reload recipes first
+              if (sessionRestored) {
+                try {
+                  await this.loadRecipes();
+                } catch (error) {
+                  console.warn("Failed to load recipes after session restoration:", error);
+                }
               }
+
+              // Initialize ACE editor and load recipe content after session restoration
+              this.$nextTick(() => {
+                setTimeout(() => {
+                  if (!this.aceEditor && document.getElementById('ace-recipe-editor')) {
+                    this.initializeAceEditor();
+                    // Ensure editor displays correct content
+                    if (this.selectedRecipe) {
+                      this.selectRecipe(this.selectedRecipe);
+                    }
+                  }
+                }, 150);
+              });
             }
           },
 
@@ -577,9 +593,19 @@
                 if (this.recipeExists === "yes") {
                   return this.needsSpecificVersion !== "";
                 } else {
-                  // For new recipes, auto-creation is handled automatically
-                  // Only allow proceeding if auto-creation is complete or if manual options are available
-                  return !this.apiStates.autoCreatingRecipe;
+                  // For new recipes, check if auto-creation is complete
+                  if (this.apiStates.autoCreatingRecipe) {
+                    return false; // Still creating, wait
+                  }
+
+                  // If recipes were created successfully, check if user has made a choice about version management
+                  if ((this.apiResults.pypiResult && this.apiResults.pypiResult.success) ||
+                      (this.apiResults.copyResult && this.apiResults.copyResult.success)) {
+                    return this.needsSpecificVersion !== ""; // User must choose yes/no for version management
+                  }
+
+                  // For manual creation, allow proceeding
+                  return true;
                 }
               case 3:
                 // Check if recipe validation passed
@@ -1312,8 +1338,14 @@
                   try {
                     await this.runPyPackageCreator();
                     if (this.apiResults.pypiResult && this.apiResults.pypiResult.success) {
-                      this.showSuccess("✅ PyPI package created successfully!");
-                      return;
+                      const multipleRecipesInfo = this.getMultipleRecipesInfo();
+                      if (multipleRecipesInfo) {
+                        this.showSuccess(multipleRecipesInfo);
+                      } else {
+                        this.showSuccess("✅ PyPI package created successfully!");
+                      }
+                      // Don't return here - let the user proceed to step 3 for version management
+                      // The recipe is now available in the session, user can decide to add versions or proceed
                     }
                   } catch (error) {
                     console.error("PyPackageCreator failed:", error);
@@ -1331,8 +1363,14 @@
                   await this.runCopyPackage();
                   console.log("After runCopyPackage, apiResults.copyResult =", this.apiResults.copyResult);
                   if (this.apiResults.copyResult && this.apiResults.copyResult.success) {
-                    this.showSuccess("✅ Official recipe copied successfully!");
-                    return;
+                    const copiedFilesInfo = this.getCopiedFilesInfo();
+                    if (copiedFilesInfo) {
+                      this.showSuccess(copiedFilesInfo);
+                    } else {
+                      this.showSuccess("✅ Official recipe copied successfully!");
+                    }
+                    // Don't return here - let the user proceed to step 3 for version management
+                    // The recipe is now available in the session, user can decide to add versions or proceed
                   }
                 } catch (error) {
                   console.error("Copy package failed:", error);
@@ -1361,6 +1399,12 @@
               if (!this.selectedRecipe && this.packageName) {
                 // First try exact match with getRecipeName()
                 let currentRecipe = result.recipes.find((r) => r.package_name === this.getRecipeName());
+
+                // If no exact match found, try to find the main package from PyPI creation
+                if (!currentRecipe && this.apiResults.pypiResult && this.apiResults.pypiResult.moved_packages) {
+                  const mainPackageName = `py-${this.packageName}`;
+                  currentRecipe = result.recipes.find((r) => r.package_name === mainPackageName);
+                }
 
                 // If no exact match found and we have recipes, try to find the most recently created one
                 // This handles cases where URL creation creates a different recipe name
@@ -1608,6 +1652,39 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
 
           getPyPackageCreatorCommand() {
             return `cd ~/r-spack-recipe-builder\n./PyPackageCreator.py -f ${this.pypiName || this.packageName}`;
+          },
+
+          getMultipleRecipesInfo() {
+            if (this.apiResults.pypiResult && this.apiResults.pypiResult.moved_packages && this.apiResults.pypiResult.moved_packages.length > 1) {
+              const packages = this.apiResults.pypiResult.moved_packages;
+              const mainPackage = packages.find(p => p.name === `py-${this.packageName}`) || packages[0];
+              const dependencyPackages = packages.filter(p => p.name !== mainPackage.name);
+
+              let info = `✅ PyPI package created successfully!\n\n`;
+              info += `Main package: ${mainPackage.name}\n`;
+              if (dependencyPackages.length > 0) {
+                info += `Dependencies created: ${dependencyPackages.map(p => p.name).join(', ')}\n`;
+              }
+              info += `\nAll recipes are available in the dropdown below.`;
+
+              return info;
+            }
+            return null;
+          },
+
+          getCopiedFilesInfo() {
+            if (this.apiResults.copyResult && this.apiResults.copyResult.copied_files && this.apiResults.copyResult.copied_files.length > 0) {
+              const files = this.apiResults.copyResult.copied_files;
+              let info = `✅ Official recipe copied successfully!\n\n`;
+              info += `Copied files:\n`;
+              files.forEach(file => {
+                info += `  • ${file}\n`;
+              });
+              info += `\nAll files are available in the recipe directory.`;
+
+              return info;
+            }
+            return null;
           },
 
           getVersionCommand() {
@@ -1869,467 +1946,7 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/mode-python.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/theme-github.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/ext-whitespace.min.js"></script>
-    <style>
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        margin: 0;
-        padding: 40px 20px;
-        background-color: #fafafa;
-        color: #333;
-        line-height: 1.6;
-      }
-
-      .header {
-        background: white;
-        color: #333;
-        padding: 40px 0;
-        margin-bottom: 40px;
-        border-bottom: 1px solid #e0e0e0;
-        text-align: center;
-      }
-
-      .header h1 {
-        font-weight: 300;
-        font-size: 2.5rem;
-        margin: 0 0 10px 0;
-        letter-spacing: -0.5px;
-      }
-
-      .header p {
-        font-weight: 400;
-        color: #666;
-        margin: 0;
-        font-size: 1.1rem;
-      }
-
-      .wizard-container {
-        background: white;
-        padding: 60px;
-        max-width: 1000px;
-        margin: 0 auto;
-        border: 1px solid #e0e0e0;
-      }
-
-      .progress-bar {
-        background: #f0f0f0;
-        height: 2px;
-        margin-bottom: 60px;
-        overflow: hidden;
-      }
-
-      .progress-fill {
-        background: #333;
-        height: 100%;
-        transition: width 0.3s ease;
-      }
-
-      .step {
-        display: none;
-      }
-
-      .step.active {
-        display: block;
-        animation: fadeIn 0.3s ease;
-      }
-
-      @keyframes fadeIn {
-        from {
-          opacity: 0;
-          transform: translateY(10px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-
-      @keyframes spin {
-        0% {
-          transform: rotate(0deg);
-        }
-        100% {
-          transform: rotate(360deg);
-        }
-      }
-
-      .input-group {
-        margin-bottom: 20px;
-      }
-
-      label {
-        display: block;
-        margin-bottom: 8px;
-        font-weight: 500;
-        color: #666;
-        font-size: 14px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      input[type="text"],
-      input[type="url"],
-      select,
-      textarea {
-        width: 100%;
-        padding: 12px 0;
-        border: none;
-        border-bottom: 1px solid #e0e0e0;
-        font-size: 16px;
-        transition: border-color 0.2s ease;
-        box-sizing: border-box;
-        background: transparent;
-      }
-
-      input:focus,
-      select:focus,
-      textarea:focus {
-        outline: none;
-        border-bottom-color: #333;
-      }
-
-      .invalid-input {
-        border-bottom-color: #dc3545 !important;
-      }
-
-      .error-message {
-        color: #dc3545;
-        font-size: 12px;
-        margin-top: 5px;
-        font-weight: 500;
-      }
-
-      .btn {
-        background: #333;
-        color: white;
-        border: 1px solid #333;
-        padding: 12px 24px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.2s ease;
-        margin-right: 10px;
-      }
-
-      .btn:hover {
-        background: white;
-        color: #333;
-      }
-
-      .btn-disabled {
-        background: #6c757d;
-        color: white;
-        border-color: #6c757d;
-        cursor: not-allowed;
-        opacity: 0.6;
-      }
-
-      .btn-disabled:hover {
-        background: #6c757d;
-        color: white;
-        cursor: not-allowed;
-      }
-
-      .btn-secondary {
-        background: white;
-        color: #333;
-        border-color: #ccc;
-      }
-
-      .btn-secondary:hover {
-        background: #f5f5f5;
-      }
-
-      .btn-success {
-        background: #28a745;
-        border-color: #28a745;
-      }
-
-      .btn-success:hover {
-        background: white;
-        color: #28a745;
-      }
-
-      .btn-warning {
-        background: #ffc107;
-        color: #333;
-        border-color: #ffc107;
-      }
-
-      .btn-warning:hover {
-        background: white;
-      }
-
-      .command-box {
-        background: #f8f9fa;
-        border: 1px solid #e0e0e0;
-        padding: 20px;
-        font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace;
-        font-size: 14px;
-        margin: 20px 0;
-        display: flex;
-        align-items: center;
-        gap: 15px;
-      }
-
-      .command-box span {
-        flex: 1;
-        line-height: 1.5;
-      }
-
-      .play-btn {
-        background: #28a745;
-        color: white;
-        border: 1px solid #28a745;
-        padding: 8px 12px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 500;
-        transition: all 0.2s ease;
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        min-width: 80px;
-        justify-content: center;
-      }
-
-      .play-btn:hover {
-        background: white;
-        color: #28a745;
-      }
-
-      .play-btn:disabled {
-        background: #6c757d;
-        border-color: #6c757d;
-        color: white;
-        cursor: not-allowed;
-      }
-
-      .play-btn:disabled:hover {
-        background: #6c757d;
-        color: white;
-      }
-
-      .copy-btn {
-        background: #333;
-        color: white;
-        border: 1px solid #333;
-        padding: 6px 12px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 500;
-        transition: all 0.2s ease;
-        border-radius: 4px;
-      }
-
-      .copy-btn:hover {
-        background: white;
-        color: #333;
-      }
-
-      .info-box {
-        background: #f8f9fa;
-        border-left: 4px solid #333;
-        padding: 20px;
-        margin: 20px 0;
-      }
-
-      .warning-box {
-        background: #fff8e1;
-        border-left: 4px solid #ffc107;
-        padding: 20px;
-        margin: 20px 0;
-      }
-
-      .success-box {
-        background: #f1f8e9;
-        border-left: 4px solid #28a745;
-        padding: 20px;
-        margin: 20px 0;
-      }
-
-      .radio-group {
-        display: flex;
-        gap: 15px;
-        flex-wrap: wrap;
-      }
-
-      .radio-option {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .checkbox-group {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin: 10px 0;
-      }
-
-      .step-title {
-        color: #333;
-        border-bottom: 1px solid #e0e0e0;
-        padding-bottom: 15px;
-        margin-bottom: 30px;
-        font-weight: 500;
-      }
-
-      .navigation {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 60px;
-        padding-top: 30px;
-        border-top: 1px solid #e0e0e0;
-      }
-
-      .stream-output {
-        background: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 4px;
-        padding: 15px;
-        margin: 15px 0;
-        max-height: 300px;
-        overflow-y: auto;
-        overflow-x: auto;
-        font-family: "Courier New", monospace;
-        font-size: 12px;
-        line-height: 1.4;
-        word-wrap: break-word;
-        white-space: pre-wrap;
-      }
-
-      .stream-output h4 {
-        margin: 0 0 10px 0;
-        color: #333;
-        font-size: 14px;
-      }
-
-      .start-line {
-        color: #007bff;
-        font-weight: bold;
-      }
-
-      .error-line {
-        color: #dc3545;
-      }
-
-      .complete-line {
-        color: #28a745;
-        font-weight: bold;
-      }
-
-      .output-line {
-        color: #333;
-      }
-
-      /* Notification System */
-      .notifications-container {
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 1000;
-        max-width: 400px;
-      }
-
-      .notification {
-        background: white;
-        border: 1px solid #e0e0e0;
-        border-radius: 4px;
-        padding: 15px 20px;
-        margin-bottom: 10px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        animation: slideIn 0.3s ease;
-        position: relative;
-        font-size: 14px;
-        line-height: 1.4;
-      }
-
-      .notification.error {
-        border-left: 4px solid #dc3545;
-        background: #fff5f5;
-      }
-
-      .notification.success {
-        border-left: 4px solid #28a745;
-        background: #f8fff9;
-      }
-
-      .notification.info {
-        border-left: 4px solid #007bff;
-        background: #f8f9ff;
-      }
-
-      .notification .close-btn {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background: none;
-        border: none;
-        font-size: 18px;
-        cursor: pointer;
-        color: #999;
-        padding: 0;
-        width: 20px;
-        height: 20px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      .notification .close-btn:hover {
-        color: #333;
-      }
-
-      @keyframes slideIn {
-        from {
-          transform: translateX(100%);
-          opacity: 0;
-        }
-        to {
-          transform: translateX(0);
-          opacity: 1;
-        }
-      }
-
-      /* ACE Editor Styles */
-      .ace-editor-container {
-        border: 1px solid #e0e0e0;
-        border-radius: 4px;
-        position: relative;
-        background: #fafafa;
-      }
-
-      .ace-editor {
-        width: 100%;
-        height: 500px;
-        font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace;
-        font-size: 14px;
-        line-height: 1.6;
-      }
-
-      .ace-editor-toolbar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 10px 15px;
-        background: #f8f9fa;
-        border-bottom: 1px solid #e0e0e0;
-        font-size: 12px;
-        color: #666;
-      }
-
-      .ace-editor-info {
-        display: flex;
-        gap: 15px;
-        align-items: center;
-      }
-
-      .ace-editor-shortcuts {
-        font-size: 11px;
-        color: #999;
-      }
-    </style>
+    <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <div class="header">
@@ -2711,6 +2328,83 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
             </div>
           </div>
         </div>
+
+        <!-- Recipe Created Successfully - Version Management Options -->
+        <div x-show="!apiStates.autoCreatingRecipe && ((apiResults.pypiResult && apiResults.pypiResult.success) || (apiResults.copyResult && apiResults.copyResult.success))" class="success-box">
+          <strong>✅ Recipe Created Successfully!</strong><br />
+          <div style="margin-top: 15px;">
+            <div class="input-group">
+              <label>Do you need to add a specific version to the recipe?</label>
+              <div class="radio-group">
+                <div class="radio-option">
+                  <input type="radio" id="version-yes-new" x-model="needsSpecificVersion" value="yes" />
+                  <label for="version-yes-new">Yes, add a new version</label>
+                </div>
+                <div class="radio-option">
+                  <input type="radio" id="version-no-new" x-model="needsSpecificVersion" value="no" />
+                  <label for="version-no-new">No, proceed to editor</label>
+                </div>
+              </div>
+            </div>
+
+            <div x-show="needsSpecificVersion === 'yes'" style="margin-top: 15px;">
+              <div class="input-group">
+                <label for="newVersionNew">New Version:</label>
+                <input type="text" id="newVersionNew" x-model="newVersion" placeholder="e.g., 1.2.3" />
+              </div>
+
+              <div class="command-box">
+                <span x-text="'spack checksum -b ' + getRecipeName()"></span>
+                <button class="play-btn" @click="runSpackChecksum()" :disabled="apiStates.runningChecksum">
+                  <span x-show="!apiStates.runningChecksum">Run</span>
+                  <span x-show="apiStates.runningChecksum">Running...</span>
+                </button>
+              </div>
+
+              <div x-show="apiResults.checksums && apiResults.checksums.success" class="success-box">
+                <!-- Show specific version checksum first if specified -->
+                <div x-show="newVersion && apiResults.checksums && apiResults.checksums.checksums && apiResults.checksums.checksums[newVersion]" style="margin-bottom: 15px">
+                  <strong>Checksum for version <span x-text="newVersion"></span>:</strong>
+                  <div class="command-box" style="margin: 10px 0; background: #e8f5e8">
+                    <span style="font-family: monospace; font-size: 13px; color: #155724" x-text="getVersionCommand()"></span>
+                    <button class="copy-btn" @click="copyToClipboard(getVersionCommand())" style="background: #28a745">Copy</button>
+                  </div>
+                </div>
+
+                <div x-data="{ showAllChecksums: false }">
+                  <button @click="showAllChecksums = !showAllChecksums" class="btn btn-secondary">
+                    <span x-text="showAllChecksums ? 'Hide All Checksums' : 'Show All Checksums'"></span>
+                  </button>
+                  <div x-show="showAllChecksums" style="margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto">
+                    <template x-for="[version, checksum] in Object.entries(apiResults.checksums && apiResults.checksums.checksums || {})">
+                      <div style="margin: 5px 0; padding: 5px; border-radius: 3px" :style="version === newVersion ? 'background-color: #fff3cd; border: 1px solid #ffeaa7;' : ''">
+                        <div
+                          style="cursor: pointer; background: none; border: none; padding: 0; color: inherit; font: inherit; text-align: left"
+                          @click='copyToClipboard("version(\"" + version + "\", sha256=\"" + checksum + "\")")'
+                          title="Click to copy"
+                        >
+                          version(<span x-text="version"></span>, sha256=<span x-text="checksum"></span>)
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+              <div x-show="apiResults.checksums && !apiResults.checksums.success" class="warning-box">
+                Error:
+                <span x-text="apiResults.checksums && apiResults.checksums.message"></span>
+              </div>
+
+              <div x-show="apiResults.checksums && apiResults.checksums.success" class="warning-box">
+                <strong>Manual Step:</strong> Edit the recipe file in the next step to add the new version and SHA256 checksum from the output above.
+              </div>
+            </div>
+
+            <div x-show="needsSpecificVersion === 'no'" style="margin-top: 15px;">
+              <div class="success-box">✅ Great! You can use the existing recipe as-is. Proceed to the recipe editor.</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Step 3: Recipe Modification -->
@@ -2775,7 +2469,7 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
               >
                 <option value="">Select a recipe...</option>
                 <template x-for="recipe in apiResults.recipes" :key="recipe.package_name">
-                  <option :value="recipe.package_name" x-text="recipe.package_name + (recipe.exists ? ' ✓' : ' ✗') + (recipe.package_name === getRecipeName() ? ' (Current Package)' : '')"></option>
+                  <option :value="recipe.package_name" x-text="recipe.package_name + (recipe.exists ? ' ✓' : ' ✗') + (recipe.package_name === getRecipeName() ? ' (Current Package)' : '') + (apiResults.pypiResult && apiResults.pypiResult.moved_packages && apiResults.pypiResult.moved_packages.find(p => p.name === recipe.package_name) ? (recipe.package_name === 'py-' + packageName ? ' (Main)' : ' (Dependency)') : '')"></option>
                 </template>
               </select>
 
@@ -2784,6 +2478,38 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
                 <strong x-text="selectedRecipe && selectedRecipe.package_name"></strong>
                 <span style="color: #666; margin-left: 10px" x-text="selectedRecipe && selectedRecipe.file_path"></span>
                 <span x-show="selectedRecipe && selectedRecipe.size" style="color: #999; margin-left: 10px" x-text="selectedRecipe && '(' + (selectedRecipe.size / 1024).toFixed(1) + ' KB)'"></span>
+              </div>
+
+              <!-- Multiple Recipes Info -->
+              <div x-show="apiResults.pypiResult && apiResults.pypiResult.moved_packages && apiResults.pypiResult.moved_packages.length > 1" style="margin-top: 10px; padding: 10px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; font-size: 13px">
+                <strong>📦 Multiple Recipes Created:</strong>
+                <div style="margin-top: 5px; font-family: monospace; font-size: 12px;">
+                  <template x-for="package in apiResults.pypiResult.moved_packages" :key="package.name">
+                    <div style="margin: 2px 0; padding: 2px 0;">
+                      <span x-text="package.name" :style="package.name === 'py-' + packageName ? 'font-weight: bold; color: #155724;' : 'color: #856404;'"></span>
+                      <span x-show="package.name === 'py-' + packageName" style="color: #155724; margin-left: 5px;">(Main Package)</span>
+                      <span x-show="package.name !== 'py-' + packageName" style="color: #856404; margin-left: 5px;">(Dependency)</span>
+                    </div>
+                  </template>
+                </div>
+                <div style="margin-top: 8px; font-size: 12px; color: #856404;">
+                  All recipes are available in the dropdown above. The main package is automatically selected.
+                </div>
+              </div>
+
+              <!-- Copied Files Info -->
+              <div x-show="apiResults.copyResult && apiResults.copyResult.copied_files && apiResults.copyResult.copied_files.length > 0" style="margin-top: 10px; padding: 10px; background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 4px; font-size: 13px">
+                <strong>📁 Files Copied from Repository:</strong>
+                <div style="margin-top: 5px; font-family: monospace; font-size: 12px;">
+                  <template x-for="file in apiResults.copyResult.copied_files" :key="file">
+                    <div style="margin: 2px 0; padding: 2px 0; color: #0c5460;">
+                      <span x-text="file"></span>
+                    </div>
+                  </template>
+                </div>
+                <div style="margin-top: 8px; font-size: 12px; color: #0c5460;">
+                  All files (including patch files) have been copied to the recipe directory.
+                </div>
               </div>
             </div>
           </div>
