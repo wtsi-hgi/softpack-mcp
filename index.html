@@ -16,6 +16,11 @@
           apiBaseUrl: "{{API_BASE_URL}}",
           sessionId: null,
 
+          // Session recovery state
+          hasExistingSession: false,
+          existingSessionData: null,
+          showSessionChoice: false,
+
           // Notification system
           notifications: [],
           notificationId: 0,
@@ -119,12 +124,420 @@
           hasCollaboratorAccess: "",
           githubUsername: "",
 
+          // Cookie management functions
+          setCookie(name, value, days = 7) {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
+
+            // Compress the data using a simple compression technique
+            const jsonString = JSON.stringify(value);
+            const compressed = this.compressData(jsonString);
+
+            // Check if the compressed data is still too large (max 3500 bytes to be safe)
+            if (compressed.length > 3500) {
+              console.warn(`Cookie ${name} would be too large (${compressed.length} bytes), storing minimal data instead`);
+              // Store only essential data
+              const minimalData = this.createMinimalSessionData(value);
+              const minimalJson = JSON.stringify(minimalData);
+              const minimalCompressed = this.compressData(minimalJson);
+
+              if (minimalCompressed.length > 3500) {
+                console.warn(`Even minimal session data is too large, skipping cookie storage`);
+                return;
+              }
+
+              document.cookie = `${name}=${minimalCompressed};expires=${expires.toUTCString()};path=/`;
+            } else {
+              document.cookie = `${name}=${compressed};expires=${expires.toUTCString()};path=/`;
+            }
+          },
+
+          getCookie(name) {
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+              let c = ca[i];
+              while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+              if (c.indexOf(nameEQ) === 0) {
+                try {
+                  const compressedData = c.substring(nameEQ.length, c.length);
+                  const jsonString = this.decompressData(compressedData);
+                  return JSON.parse(jsonString);
+                } catch (e) {
+                  console.warn(`Failed to parse cookie ${name}:`, e);
+                  // Clear the corrupted cookie
+                  this.deleteCookie(name);
+                  return null;
+                }
+              }
+            }
+            return null;
+          },
+
+          deleteCookie(name) {
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/`;
+          },
+
+          // Clear corrupted cookie and start fresh
+          clearCorruptedCookie() {
+            this.deleteCookie('softpack_session');
+            this.showInfo("🔄 Cleared corrupted session cookie. Starting fresh session.");
+            this.hasExistingSession = false;
+            this.existingSessionData = null;
+            this.showSessionChoice = false;
+          },
+
+          // Simple compression using base64 and gzip-like compression
+          compressData(data) {
+            // Remove unnecessary whitespace and use shorter property names
+            const compressed = data
+              .replace(/\s+/g, ' ')
+              .replace(/"([^"]+)":/g, (match, key) => {
+                // Use shorter property names for common keys
+                const shortNames = {
+                  'sessionId': 's',
+                  'currentStep': 'c',
+                  'packageName': 'p',
+                  'pypiName': 'pn',
+                  'packageType': 'pt',
+                  'recipeExists': 're',
+                  'needsSpecificVersion': 'nsv',
+                  'newVersion': 'nv',
+                  'pypiSuccess': 'ps',
+                  'foundInOfficial': 'fo',
+                  'hasReleases': 'hr',
+                  'releaseUrl': 'ru',
+                  'repoUrl': 'rpu',
+                  'buildSuccess': 'bs',
+                  'validationSuccess': 'vs',
+                  'customValidationScript': 'cvs',
+                  'hashSelection': 'hs',
+                  'prUrl': 'pu',
+                  'selectedRecipe': 'sr',
+                  'recipeContent': 'rc',
+                  'validationResult': 'vr',
+                  'installOutput': 'io',
+                  'validationOutput': 'vo',
+                  'showDetailedLog': 'sdl',
+                  'apiResults': 'ar',
+                  'modifications': 'm',
+                  'hasCollaboratorAccess': 'hca',
+                  'githubUsername': 'gu',
+                  'timestamp': 't'
+                };
+                return `"${shortNames[key] || key}":`;
+              });
+
+            return btoa(compressed);
+          },
+
+          decompressData(compressedData) {
+            try {
+              const decompressed = atob(compressedData);
+
+              // Restore original property names
+              const restored = decompressed.replace(/"([^"]+)":/g, (match, key) => {
+                const longNames = {
+                  's': 'sessionId',
+                  'c': 'currentStep',
+                  'p': 'packageName',
+                  'pn': 'pypiName',
+                  'pt': 'packageType',
+                  're': 'recipeExists',
+                  'nsv': 'needsSpecificVersion',
+                  'nv': 'newVersion',
+                  'ps': 'pypiSuccess',
+                  'fo': 'foundInOfficial',
+                  'hr': 'hasReleases',
+                  'ru': 'releaseUrl',
+                  'rpu': 'repoUrl',
+                  'bs': 'buildSuccess',
+                  'vs': 'validationSuccess',
+                  'cvs': 'customValidationScript',
+                  'hs': 'hashSelection',
+                  'pu': 'prUrl',
+                  'sr': 'selectedRecipe',
+                  'rc': 'recipeContent',
+                  'vr': 'validationResult',
+                  'io': 'installOutput',
+                  'vo': 'validationOutput',
+                  'sdl': 'showDetailedLog',
+                  'ar': 'apiResults',
+                  'm': 'modifications',
+                  'hca': 'hasCollaboratorAccess',
+                  'gu': 'githubUsername',
+                  't': 'timestamp'
+                };
+                return `"${longNames[key] || key}":`;
+              });
+
+              return restored;
+            } catch (e) {
+              console.warn('Failed to decompress data:', e);
+              return compressedData; // Return original if decompression fails
+            }
+          },
+
+          // Create minimal session data when cookie would be too large
+          createMinimalSessionData(fullData) {
+            return {
+              sessionId: fullData.sessionId,
+              currentStep: fullData.currentStep,
+              packageName: fullData.packageName,
+              pypiName: fullData.pypiName,
+              packageType: fullData.packageType,
+              recipeExists: fullData.recipeExists,
+              needsSpecificVersion: fullData.needsSpecificVersion,
+              newVersion: fullData.newVersion,
+              pypiSuccess: fullData.pypiSuccess,
+              foundInOfficial: fullData.foundInOfficial,
+              hasReleases: fullData.hasReleases,
+              releaseUrl: fullData.releaseUrl,
+              repoUrl: fullData.repoUrl,
+              buildSuccess: fullData.buildSuccess,
+              validationSuccess: fullData.validationSuccess,
+              customValidationScript: fullData.customValidationScript,
+              hashSelection: fullData.hashSelection,
+              prUrl: fullData.prUrl,
+              selectedRecipe: fullData.selectedRecipe,
+              recipeContent: fullData.recipeContent,
+              validationResult: fullData.validationResult,
+              // Skip large arrays and objects
+              installOutput: [],
+              validationOutput: [],
+              showDetailedLog: false,
+              apiResults: { sessionInfo: fullData.apiResults?.sessionInfo },
+              modifications: {},
+              hasCollaboratorAccess: fullData.hasCollaboratorAccess,
+              githubUsername: fullData.githubUsername,
+              timestamp: fullData.timestamp
+            };
+          },
+
+          saveSessionState() {
+            if (!this.sessionId) return;
+
+            const sessionData = {
+              sessionId: this.sessionId,
+              currentStep: this.currentStep,
+              packageName: this.packageName,
+              pypiName: this.pypiName,
+              packageType: this.packageType,
+              recipeExists: this.recipeExists,
+              needsSpecificVersion: this.needsSpecificVersion,
+              newVersion: this.newVersion,
+              pypiSuccess: this.pypiSuccess,
+              foundInOfficial: this.foundInOfficial,
+              hasReleases: this.hasReleases,
+              releaseUrl: this.releaseUrl,
+              repoUrl: this.repoUrl,
+              buildSuccess: this.buildSuccess,
+              validationSuccess: this.validationSuccess,
+              customValidationScript: this.customValidationScript,
+              hashSelection: this.hashSelection,
+              prUrl: this.prUrl,
+              selectedRecipe: this.selectedRecipe,
+              recipeContent: this.recipeContent,
+              validationResult: this.validationResult,
+              installOutput: this.installOutput,
+              validationOutput: this.validationOutput,
+              showDetailedLog: this.showDetailedLog,
+              apiResults: this.apiResults,
+              modifications: this.modifications,
+              hasCollaboratorAccess: this.hasCollaboratorAccess,
+              githubUsername: this.githubUsername,
+              timestamp: new Date().toISOString()
+            };
+
+            try {
+              this.setCookie('softpack_session', sessionData, 7);
+            } catch (error) {
+              console.warn('Failed to save session state:', error);
+              // Don't show error to user as this is a background operation
+            }
+          },
+
+          loadSessionState() {
+            try {
+              const sessionData = this.getCookie('softpack_session');
+
+              if (!sessionData) {
+                return false;
+              }
+
+              // Check if session is less than 7 days old
+              const sessionAge = new Date() - new Date(sessionData.timestamp);
+              const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+
+              if (sessionAge > maxAge) {
+                this.deleteCookie('softpack_session');
+                return false;
+              }
+
+              this.existingSessionData = sessionData;
+              this.hasExistingSession = true;
+              return true;
+            } catch (error) {
+              console.warn('Failed to load session state, clearing corrupted cookie:', error);
+              this.clearCorruptedCookie();
+              return false;
+            }
+          },
+
+          async recoverSession() {
+            if (!this.existingSessionData) return;
+
+            const data = this.existingSessionData;
+
+            // Try to restore the existing session UUID first
+            let sessionRestored = false;
+            if (data.sessionId) {
+              try {
+                const sessionExists = await this.checkSessionExists(data.sessionId);
+                if (sessionExists) {
+                  // Session still exists on the backend, reuse it
+                  this.sessionId = data.sessionId;
+                  this.apiResults.sessionInfo = { session_id: data.sessionId, reused: true };
+                  sessionRestored = true;
+                  this.showSuccess("✅ Existing session restored");
+                }
+              } catch (error) {
+                console.warn("Failed to check existing session, will create new:", error);
+              }
+            }
+
+            // If we couldn't restore the existing session, create a new one
+            if (!sessionRestored) {
+              await this.createSession();
+              this.showSuccess("✅ Session recovered with new UUID (old session expired)!");
+            }
+
+            // Restore all the saved state
+            this.currentStep = data.currentStep || 1;
+            this.packageName = data.packageName || "";
+            this.pypiName = data.pypiName || "";
+            this.packageType = data.packageType || "";
+            this.recipeExists = data.recipeExists || "";
+            this.needsSpecificVersion = data.needsSpecificVersion || "";
+            this.newVersion = data.newVersion || "";
+            this.pypiSuccess = data.pypiSuccess || "";
+            this.foundInOfficial = data.foundInOfficial || "";
+            this.hasReleases = data.hasReleases || "";
+            this.releaseUrl = data.releaseUrl || "";
+            this.repoUrl = data.repoUrl || "";
+            this.buildSuccess = data.buildSuccess || "";
+            this.validationSuccess = data.validationSuccess || "";
+            this.customValidationScript = data.customValidationScript || "";
+            this.hashSelection = data.hashSelection || "";
+            this.prUrl = data.prUrl || "";
+            this.selectedRecipe = data.selectedRecipe || null;
+            this.recipeContent = data.recipeContent || "";
+            this.validationResult = data.validationResult || null;
+
+            // Handle arrays that might be missing in minimal session data
+            this.installOutput = data.installOutput || [];
+            this.validationOutput = data.validationOutput || [];
+            this.showDetailedLog = data.showDetailedLog || false;
+
+            // Merge API results, handling minimal data case
+            if (data.apiResults) {
+              this.apiResults = { ...this.apiResults, ...data.apiResults };
+            }
+
+            this.modifications = data.modifications || {};
+            this.hasCollaboratorAccess = data.hasCollaboratorAccess || "";
+            this.githubUsername = data.githubUsername || "";
+
+            this.showSessionChoice = false;
+            this.hasExistingSession = false;
+            this.existingSessionData = null;
+
+            // Save the recovered session state
+            this.saveSessionState();
+
+            // If we restored an existing session and we're on step 3, reload recipes to show existing work
+            if (sessionRestored && this.currentStep === 3) {
+              try {
+                await this.loadRecipes();
+              } catch (error) {
+                console.warn("Failed to load recipes after session restoration:", error);
+              }
+            }
+          },
+
+          startNewSession() {
+            this.deleteCookie('softpack_session');
+            this.hasExistingSession = false;
+            this.existingSessionData = null;
+            this.showSessionChoice = false;
+            this.clearAllStates();
+            this.createSession();
+          },
+
+
+
           // Watch for changes to packageName and auto-convert
           init() {
             this.$watch('packageName', (value, oldValue) => {
               // Always store the original name as pypiName
               this.pypiName = value;
+              this.saveSessionOnChange();
             });
+
+            // Check for existing session on page load
+            if (this.loadSessionState()) {
+              this.showSessionChoice = true;
+            }
+
+            // Auto-save session state on key changes
+            this.$watch('currentStep', () => this.saveSessionOnChange());
+            this.$watch('packageType', () => this.saveSessionOnChange());
+            this.$watch('recipeExists', () => this.saveSessionOnChange());
+            this.$watch('needsSpecificVersion', () => this.saveSessionOnChange());
+            this.$watch('newVersion', () => this.saveSessionOnChange());
+            this.$watch('pypiSuccess', () => this.saveSessionOnChange());
+            this.$watch('foundInOfficial', () => this.saveSessionOnChange());
+            this.$watch('hasReleases', () => this.saveSessionOnChange());
+            this.$watch('releaseUrl', () => this.saveSessionOnChange());
+            this.$watch('repoUrl', () => this.saveSessionOnChange());
+            this.$watch('buildSuccess', () => this.saveSessionOnChange());
+            this.$watch('validationSuccess', () => this.saveSessionOnChange());
+            this.$watch('customValidationScript', () => this.saveSessionOnChange());
+            this.$watch('hashSelection', () => this.saveSessionOnChange());
+            this.$watch('prUrl', () => this.saveSessionOnChange());
+            this.$watch('selectedRecipe', () => this.saveSessionOnChange());
+            this.$watch('recipeContent', () => this.saveSessionOnChange());
+            this.$watch('validationResult', () => this.saveSessionOnChange());
+            this.$watch('installOutput', () => this.saveSessionOnChange());
+            this.$watch('validationOutput', () => this.saveSessionOnChange());
+            this.$watch('showDetailedLog', () => this.saveSessionOnChange());
+            this.$watch('hasCollaboratorAccess', () => this.saveSessionOnChange());
+            this.$watch('githubUsername', () => this.saveSessionOnChange());
+
+            // Set up periodic cleanup of output arrays to prevent cookie bloat
+            setInterval(() => {
+              if (this.sessionId) {
+                this.cleanupOutputArrays();
+              }
+            }, 30000); // Clean up every 30 seconds
+          },
+
+          // Auto-save session state on any change
+          saveSessionOnChange() {
+            if (this.sessionId) {
+              this.saveSessionState();
+            }
+          },
+
+          // Clean up large output arrays to prevent cookie size issues
+          cleanupOutputArrays() {
+            // Keep only the last 50 lines of output to prevent cookie bloat
+            if (this.installOutput && this.installOutput.length > 50) {
+              this.installOutput = this.installOutput.slice(-50);
+            }
+            if (this.validationOutput && this.validationOutput.length > 50) {
+              this.validationOutput = this.validationOutput.slice(-50);
+            }
           },
 
           getRecipeName() {
@@ -216,31 +629,31 @@
 
               // Auto-check recipe existence and handle flow based on package type
               if (this.currentStep === 2) {
+                await this.checkRecipeExists();
+
+                if (this.recipeExists === "yes") {
+                  this.currentStep = 3;
+                } else {
+                  await this.autoCreateRecipe();
+                }
+
                 // For Python packages, check if they exist in our repo first
                 if (this.packageType === "python") {
-                  await this.checkRecipeExists();
-                  // If Python package doesn't exist in our repo, go directly to PyPI creation
-                  if (this.recipeExists === "no") {
-                    await this.autoCreateRecipe();
-                    // If auto-creation succeeded, auto-proceed to step 3
-                    if ((this.apiResults.pypiResult && this.apiResults.pypiResult.success) ||
-                        (this.apiResults.copyResult && this.apiResults.copyResult.success)) {
-                      this.currentStep = 3;
-                    }
+                  // If auto-creation succeeded, auto-proceed to step 3
+                  if ((this.apiResults.pypiResult && this.apiResults.pypiResult.success) ||
+                      (this.apiResults.copyResult && this.apiResults.copyResult.success)) {
+                    this.currentStep = 3;
                   }
-                } else {
-                  // For non-Python packages, check recipe existence normally
-                  this.checkRecipeExists();
                 }
-              }
 
-              // Auto-create recipe when entering step 2 for non-Python packages that don't exist
-              if (this.currentStep === 2 && this.packageType !== "python" && this.recipeExists === "no") {
-                await this.autoCreateRecipe();
-                // If auto-creation succeeded, auto-proceed to step 3
-                if ((this.apiResults.pypiResult && this.apiResults.pypiResult.success) ||
-                    (this.apiResults.copyResult && this.apiResults.copyResult.success)) {
-                  this.currentStep = 3;
+
+                // Auto-create recipe when entering step 2 for non-Python packages that don't exist
+                if (this.packageType !== "python") {
+                  // If auto-creation succeeded, auto-proceed to step 3
+                  if ((this.apiResults.pypiResult && this.apiResults.pypiResult.success) ||
+                      (this.apiResults.copyResult && this.apiResults.copyResult.success)) {
+                    this.currentStep = 3;
+                  }
                 }
               }
 
@@ -419,6 +832,18 @@
             } catch (error) {
               console.error("API request failed:", error);
               throw error;
+            }
+          },
+
+          async checkSessionExists(sessionId) {
+            try {
+              // Try to load recipes for this session - this is a lightweight way to check if session exists
+              const result = await this.apiRequest(`/recipes/${sessionId}`, "GET");
+              return true; // If the call succeeds, session exists
+            } catch (error) {
+              // If the call fails, likely the session doesn't exist or has expired
+              console.debug("Session check failed (session may have expired):", error);
+              return false;
             }
           },
 
@@ -875,6 +1300,7 @@
 
           async autoCreateRecipe() {
             this.apiStates.autoCreatingRecipe = true;
+            console.log("Before checkOfficialRecipe");
 
             try {
               // For Python packages, check PyPI first
@@ -897,11 +1323,13 @@
 
               // Check official Spack repository for all package types
               await this.checkOfficialRecipe();
+              console.log("After checkOfficialRecipe, foundInOfficial =", this.foundInOfficial);
 
               if (this.foundInOfficial === "yes") {
                 // Try to copy from official repo
                 try {
                   await this.runCopyPackage();
+                  console.log("After runCopyPackage, apiResults.copyResult =", this.apiResults.copyResult);
                   if (this.apiResults.copyResult && this.apiResults.copyResult.success) {
                     this.showSuccess("✅ Official recipe copied successfully!");
                     return;
@@ -1428,8 +1856,9 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
             this.hasCollaboratorAccess = "";
             this.githubUsername = "";
 
-            // Show success message
-            this.showSuccess("✅ All states cleared! Ready to add another package.");
+            // Clear session cookie when clearing all states
+            this.deleteCookie('softpack_session');
+
           },
         };
       };
@@ -1919,13 +2348,38 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
         </template>
       </div>
       <!-- Session Management -->
-      <div x-show="!sessionId" style="text-align: center; padding: 80px 40px">
+      <div x-show="!sessionId && !showSessionChoice" style="text-align: center; padding: 80px 40px">
         <h2 style="font-size: 2.5rem; font-weight: 300; margin-bottom: 20px; color: #333">Welcome! 👋</h2>
         <p style="font-size: 1.2rem; color: #666; margin-bottom: 40px; line-height: 1.6">Create and manage Spack packages with ease.</p>
         <button class="btn btn-success" @click="createSession()" :disabled="apiStates.creatingSession" style="font-size: 16px; padding: 15px 30px">
           <span x-show="!apiStates.creatingSession">Start</span>
           <span x-show="apiStates.creatingSession">Starting...</span>
         </button>
+      </div>
+
+      <!-- Session Recovery Choice -->
+      <div x-show="!sessionId && showSessionChoice" style="text-align: center; padding: 80px 40px">
+        <h2 style="font-size: 2.5rem; font-weight: 300; margin-bottom: 20px; color: #333">Welcome Back! 👋</h2>
+        <p style="font-size: 1.2rem; color: #666; margin-bottom: 40px; line-height: 1.6">
+          We found an existing session from your last visit.<br/>
+          <strong>Package:</strong> <span x-text="existingSessionData?.packageName || 'Unknown'"></span><br/>
+          <strong>Step:</strong> <span x-text="existingSessionData?.currentStep || 1"></span> of 5<br/>
+          <strong>Last updated:</strong> <span x-text="new Date(existingSessionData?.timestamp).toLocaleString()"></span>
+        </p>
+
+        <div style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap;">
+          <button class="btn btn-success" @click="recoverSession()" style="font-size: 16px; padding: 15px 30px">
+            🔄 Recover Last Session
+          </button>
+          <button class="btn btn-secondary" @click="startNewSession()" style="font-size: 16px; padding: 15px 30px">
+            🆕 Start New Session
+          </button>
+        </div>
+
+        <p style="font-size: 0.9rem; color: #999; margin-top: 30px; line-height: 1.4">
+          <strong>Recover Last Session:</strong> Continue where you left off with all your previous work.<br/>
+          <strong>Start New Session:</strong> Begin fresh with a clean slate.
+        </p>
       </div>
 
       <!-- Progress Bar -->
@@ -2079,18 +2533,7 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
             <span x-show="packageType === 'python' && !apiStates.checkingPypi && apiStates.creatingPypi">Creating Python package from PyPI...</span>
             <span x-show="!apiStates.checkingPypi && !apiStates.creatingPypi && officialChecking">Checking official Spack repository...</span>
             <span x-show="!apiStates.checkingPypi && !apiStates.creatingPypi && !officialChecking && apiStates.copyingPackage">Copying recipe from official repository...</span>
-            <span x-show="!apiStates.checkingPypi && !apiStates.creatingPypi && !officialChecking && !apiStates.copyingPackage">Creating recipe...</span>
           </div>
-        </div>
-
-        <div x-show="!apiStates.autoCreatingRecipe && packageType === 'python'" class="info-box">
-          <strong>Python package recipe creation completed.</strong><br/>
-          If automatic creation failed, you can create the recipe manually using the options below.
-        </div>
-
-        <div x-show="!apiStates.autoCreatingRecipe && packageType !== 'python'" class="info-box">
-          <strong>Automatic recipe creation completed.</strong><br/>
-          If automatic creation failed, you can create the recipe manually using the options below.
         </div>
 
         <!-- Manual Creation Options (only shown if auto-creation failed) -->
