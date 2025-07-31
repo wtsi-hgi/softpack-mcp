@@ -560,7 +560,7 @@
             if (!this.packageType || !this.packageName) return "";
             const prefixes = { python: "py-", r: "r-", other: "" };
             // Convert dots and underscores to dashes for Spack recipe name
-            const convertedName = this.packageName.replace(/[._]/g, '-');
+            const convertedName = this.packageName.replace(/[._]/g, '-').toLowerCase();
             return prefixes[this.packageType] + convertedName;
           },
 
@@ -657,11 +657,10 @@
               if (this.currentStep === 2) {
                 await this.checkRecipeExists();
 
-                if (this.recipeExists === "yes") {
-                  this.currentStep = 3;
-                } else {
+                if (this.recipeExists === "no") {
                   await this.autoCreateRecipe();
                 }
+                // Note: When recipe exists in spack-repo, we stay on step 2 to let user decide about version management
 
                 // For Python packages, check if they exist in our repo first
                 if (this.packageType === "python") {
@@ -716,11 +715,10 @@
                 this.resetStep4State();
               }
 
-              // Skip step 2 version check if recipe doesn't exist or skip to step 3 if using existing
-              if (this.currentStep === 2 && this.recipeExists === "yes" && this.needsSpecificVersion === "no") {
-                this.currentStep = 3; // Skip to recipe editor
-              } else if (this.currentStep === 3 && this.recipeExists === "yes" && this.needsSpecificVersion === "no") {
-                this.currentStep = 4; // Skip to build
+              // Skip step 2 version check if recipe doesn't exist
+              // Note: We don't skip step 2 when recipe exists in spack-repo since users may want to add new versions
+              if (this.currentStep === 2 && this.recipeExists === "no" && this.needsSpecificVersion === "no") {
+                this.currentStep = 3; // Skip to recipe editor only for new recipes
               }
             }
           },
@@ -2021,11 +2019,9 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
           <div x-show="step1ValidationAttempted && packageName.trim() === ''" class="error-message">
             Package name is required
           </div>
-          <div x-show="packageName && (packageName.includes('.') || packageName.includes('_'))" class="warning-box" style="margin-top: 10px; padding: 10px; font-size: 13px;">
-            <strong>Note:</strong> Spack recipe names cannot contain dots or underscores.<br/>
-            <strong>Original name:</strong> <code x-text="packageName"></code> (used for PyPI)<br/>
-            <strong>Spack recipe name:</strong> <code x-text="packageName.replace(/[._]/g, '-')"></code>
-          </div>
+          <div x-show="packageName && (packageName.includes('.') || packageName.includes('_') || packageName.toLowerCase() !== packageName)" class="warning-box" style="margin-top: 10px; padding: 10px; font-size: 13px;">
+            <strong>Note:</strong> Spack recipe names convert . or _ to -, and convert uppercase to lowercase.<br/>
+         </div>
         </div>
 
         <div class="input-group">

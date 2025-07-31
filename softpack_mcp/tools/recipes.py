@@ -154,28 +154,48 @@ async def create_recipe(
 
         # Check if recipe exists in global spack repo
         global_recipe_path = Path("/home/ubuntu/spack-repo/packages") / package_name / "package.py"
+        global_package_dir = Path("/home/ubuntu/spack-repo/packages") / package_name
 
         if global_recipe_path.exists():
-            # Copy existing recipe from global repo
+            # Copy entire package directory from global repo
+            session_package_dir = session_recipe_path.parent
             _ensure_package_directory(session_recipe_path)
-            shutil.copy2(global_recipe_path, session_recipe_path)
+
+            # Remove existing package directory if it exists
+            if session_package_dir.exists():
+                shutil.rmtree(session_package_dir)
+
+            # Copy the entire package directory
+            shutil.copytree(global_package_dir, session_package_dir)
+
+            # Get list of copied files for logging
+            copied_files = []
+            if session_package_dir.exists():
+                copied_files = [f.name for f in session_package_dir.iterdir() if f.is_file()]
+
+            # Check for patch files
+            patch_files = [f for f in copied_files if f.endswith(".patch")]
 
             logger.success(
-                "Copied recipe from global repo",
+                "Copied package from global repo",
                 session_id=session_id,
                 package_name=package_name,
-                source=str(global_recipe_path),
+                source=str(global_package_dir),
+                copied_files=copied_files,
+                patch_files=patch_files,
             )
 
             return OperationResult(
                 success=True,
-                message=f"Copied existing recipe for '{package_name}' from global repository",
+                message=f"Copied existing package '{package_name}' from global repository",
                 details={
                     "package_name": package_name,
                     "action": "copied",
-                    "source": str(global_recipe_path),
-                    "destination": str(session_recipe_path.relative_to(session_dir)),
-                    "size": session_recipe_path.stat().st_size,
+                    "source": str(global_package_dir),
+                    "destination": str(session_package_dir.relative_to(session_dir)),
+                    "copied_files": copied_files,
+                    "patch_files": patch_files,
+                    "size": session_recipe_path.stat().st_size if session_recipe_path.exists() else 0,
                 },
             )
 

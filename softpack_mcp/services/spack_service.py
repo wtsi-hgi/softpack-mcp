@@ -1157,6 +1157,8 @@ class SpackService:
                 source_patch_files = [f.name for f in src_dir.iterdir() if f.is_file() and f.name.endswith(".patch")]
                 if source_patch_files:
                     logger.error(f"Patch files exist in source but weren't copied: {source_patch_files}")
+                    # Include the source patch files in the response for debugging
+                    patch_files = source_patch_files
 
             # Apply the same modifications as in the .zshrc create function
             package_content = dest_package_py.read_text(encoding="utf-8")
@@ -1213,6 +1215,7 @@ class SpackService:
                     "src_dir": str(src_dir),
                     "dest_dir": str(dest_dir),
                     "copied_files": copied_files,
+                    "patch_files": patch_files,
                     "legacy_commit": "78f95ff38d591cbe956a726f4a93f57d21840f86",
                     "git_checkout_success": True,
                     "modifications_applied": [
