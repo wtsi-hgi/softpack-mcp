@@ -159,6 +159,9 @@ class SpackCreatePypiResult(OperationResult):
     package_name: str = Field(..., description="Name of the created package")
     recipe_path: str | None = Field(None, description="Path to the created recipe file")
     moved_to: str | None = Field(None, description="Destination path where package was moved")
+    moved_packages: list[dict[str, str]] | None = Field(
+        None, description="List of all packages that were moved, including dependencies"
+    )
     creation_details: dict[str, Any] | None = Field(None, description="Creation process details")
 
 
@@ -169,6 +172,7 @@ class SpackCopyPackageResult(OperationResult):
     source_path: str | None = Field(None, description="Source path of the original package")
     destination_path: str | None = Field(None, description="Destination path in session")
     recipe_path: str | None = Field(None, description="Path to the copied recipe file")
+    copied_files: list[str] | None = Field(None, description="List of all files copied from the package directory")
     copy_details: dict[str, Any] | None = Field(None, description="Copy process details")
 
 
