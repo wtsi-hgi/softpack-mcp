@@ -40,7 +40,7 @@ debug:
 prod:
 	@echo "🚀 Starting Softpack MCP in production mode..."
 	@echo "🔗 API Server: http://0.0.0.0:8000"
-	@echo "🌐 Frontend: http://0.0.0.0:8001"
+	@echo "🌐 Frontend: http://0.0.0.0:80"
 	@echo "📖 API Docs: http://0.0.0.0:8000/docs"
 	@if [ -f .env ]; then export $$(cat .env | xargs); fi && python3 run_both.py
 

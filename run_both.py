@@ -26,7 +26,7 @@ def main():
 
     print("📋 Starting servers:")
     print("   🔗 API Server: http://localhost:8000")
-    print("   🌐 Frontend: http://localhost:8001")
+    print("   🌐 Frontend: http://localhost:80")
     print("   ⏹️  Press Ctrl+C to stop both servers")
     print()
 

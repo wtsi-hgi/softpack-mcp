@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 # Configuration
-PORT = 8001
+PORT = 80
 DIRECTORY = Path(__file__).parent
 
 
