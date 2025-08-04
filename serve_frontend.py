@@ -76,7 +76,9 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 def main():
     """Start the HTTP server."""
     # Change to the script directory
-    os.chdir(DIRECTORY)
+    # When running with sudo, we need to ensure we're in the right directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
 
     # Get API base URL from environment
     api_base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
