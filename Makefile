@@ -18,6 +18,8 @@ init:
 	/home/ubuntu/.local/bin/uv sync --dev
 	@echo "🔧 Setting up pre-commit hooks..."
 	/home/ubuntu/.local/bin/uv run pre-commit install
+	@echo "🔧 Setting up frontend dependencies with npm..."
+	npm install
 	@echo "📁 Creating necessary directories..."
 	mkdir -p data logs
 	@echo "📄 Creating .env file if it doesn't exist..."
