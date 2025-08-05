@@ -25,7 +25,7 @@ async def create_session(
         Session information including session_id and details
     """
     try:
-        session_id = session_manager.create_session(namespace=namespace)
+        session_id = await session_manager.create_session(namespace=namespace)
         session_dir = session_manager.get_session_dir(session_id)
 
         # Read the actual namespace from the created repo.yaml

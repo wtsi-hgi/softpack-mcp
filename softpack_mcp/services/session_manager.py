@@ -16,7 +16,7 @@ class SessionManager:
         self.sessions: dict[str, Path] = {}
         logger.info("Initialized SessionManager")
 
-    def create_session(self, namespace: str | None = None) -> str:
+    async def create_session(self, namespace: str | None = None) -> str:
         """
         Create a new isolated session.
 
@@ -32,6 +32,21 @@ class SessionManager:
         logger.info("Creating new session", session_id=session_id, session_dir=str(session_dir))
 
         try:
+            # Pull latest updates from spack-repo at session start
+            from .git_service import get_git_service
+
+            git_service = get_git_service()
+            pull_result = await git_service.pull_spack_repo_updates()
+
+            if pull_result.success:
+                logger.info(
+                    "Successfully pulled spack-repo updates at session start",
+                    changes_pulled=pull_result.changes_pulled,
+                    files_changed=len(pull_result.pull_details.get("files_changed", [])),
+                )
+            else:
+                logger.warning("Failed to pull spack-repo updates at session start", error=pull_result.message)
+
             # Create session directory structure
             session_dir.mkdir(exist_ok=True)
             spack_repo_dir = session_dir / "spack-repo"
