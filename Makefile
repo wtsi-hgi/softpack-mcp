@@ -60,7 +60,7 @@ frontend:
 	@echo "📁 Frontend will be available at http://localhost:8001"
 	@echo "🔗 API server should be running on http://localhost:8000"
 	@echo "⏹️  Press Ctrl+C to stop the server"
-	@if [ -f .env ]; then export $$(cat .env | xargs); fi && API_BASE_URL=$${API_BASE_URL:-http://localhost:8000} SOFTPACK_PORT=8001 /usr/bin/python3 serve_frontend.py
+	@if [ -f .env ]; then export $$(cat .env | xargs); fi && API_BASE_URL=$${API_BASE_URL:-http://localhost:8000} SOFTPACK_PORT=8001 /usr/bin/node serve_frontend.js
 
 
 # Run integration test for dit package

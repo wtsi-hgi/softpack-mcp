@@ -10,6 +10,19 @@ import sys
 import time
 
 
+def load_env_file(env_file_path):
+    """Load environment variables from .env file."""
+    if not os.path.exists(env_file_path):
+        return
+
+    with open(env_file_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ[key] = value
+
+
 def signal_handler(sig, frame):
     """Handle Ctrl+C to gracefully stop both servers."""
     print("\n🛑 Stopping both servers...")
@@ -18,6 +31,9 @@ def signal_handler(sig, frame):
 
 def main():
     """Run both API and frontend servers."""
+    # Load environment variables from .env file
+    load_env_file(".env")
+
     print("🚀 Starting Softpack MCP - API + Frontend")
     print("=" * 50)
 
@@ -55,9 +71,12 @@ def main():
 
         # Start frontend server with API_BASE_URL environment variable
         # Use sudo for frontend since it needs to bind to port 80
-        frontend_env = os.environ.copy()
-        frontend_env["API_BASE_URL"] = os.getenv("API_BASE_URL", "http://localhost:8000")
-        frontend_process = subprocess.Popen(["sudo", "/usr/bin/python3", "serve_frontend.py"], env=frontend_env)
+        # Pass environment variables to sudo using -E flag to preserve them
+        api_base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+        print(f"🔗 Using API_BASE_URL: {api_base_url}")
+        frontend_process = subprocess.Popen(
+            ["sudo", "-E", "/usr/bin/node", "serve_frontend.js"], env={"API_BASE_URL": api_base_url}
+        )
 
         # Wait for both processes
         api_process.wait()

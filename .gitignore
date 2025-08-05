@@ -21,3 +21,15 @@ logs/
 htmlcov/
 .pytest_cache/
 .coverage.*
+
+# node
+node_modules/
+
+# vscode
+.vscode/
+
+# macos
+.DS_Store
+
+# linux
+.idea/
