@@ -32,8 +32,9 @@ def main():
 
     try:
         # Start API server in background (production mode)
-        # Only pass SOFTPACK_ environment variables to the backend
+        # Pass SOFTPACK_ environment variables plus essential PATH
         api_env = {k: v for k, v in os.environ.items() if k.startswith("SOFTPACK_")}
+        api_env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin")
         # Use uv run to ensure proper environment
         api_process = subprocess.Popen(
             [
@@ -56,7 +57,7 @@ def main():
         # Use sudo for frontend since it needs to bind to port 80
         frontend_env = os.environ.copy()
         frontend_env["API_BASE_URL"] = os.getenv("API_BASE_URL", "http://localhost:8000")
-        frontend_process = subprocess.Popen(["sudo", "python3", "serve_frontend.py"], env=frontend_env)
+        frontend_process = subprocess.Popen(["sudo", "/usr/bin/python3", "serve_frontend.py"], env=frontend_env)
 
         # Wait for both processes
         api_process.wait()

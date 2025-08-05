@@ -41,8 +41,7 @@ prod:
 	@echo "🚀 Starting Softpack MCP in production mode..."
 	@echo "🔗 API Server: http://0.0.0.0:8000"
 	@echo "🌐 Frontend: http://0.0.0.0:80"
-	@echo "📖 API Docs: http://0.0.0.0:8000/docs"
-	@if [ -f .env ]; then export $$(cat .env | xargs); fi && python3 run_both.py
+	@if [ -f .env ]; then export $$(cat .env | xargs); fi && /usr/bin/python3 run_both.py
 
 # Clean cache and temporary files
 clean:
@@ -61,7 +60,7 @@ frontend:
 	@echo "📁 Frontend will be available at http://localhost:8001"
 	@echo "🔗 API server should be running on http://localhost:8000"
 	@echo "⏹️  Press Ctrl+C to stop the server"
-	@if [ -f .env ]; then export $$(cat .env | xargs); fi && API_BASE_URL=$${API_BASE_URL:-http://localhost:8000} python3 serve_frontend.py
+	@if [ -f .env ]; then export $$(cat .env | xargs); fi && API_BASE_URL=$${API_BASE_URL:-http://localhost:8000} SOFTPACK_PORT=8001 /usr/bin/python3 serve_frontend.py
 
 
 # Run integration test for dit package
@@ -69,7 +68,7 @@ test-integration:
 	@echo "🧪 Running dit package integration test..."
 	@echo "📦 Testing full workflow: session → recipe → copy → build → validate"
 	@echo "⏱️  This may take several minutes..."
-	python3 run_integration_test.py
+	/usr/bin/python3 run_integration_test.py
 
 svc-install:
 	sudo cp softpack-mcp.service /etc/systemd/system/
