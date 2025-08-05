@@ -2061,31 +2061,38 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
         <div class="input-group">
           <label>Do you need a specific version?</label>
           <div class="radio-group">
-            <div class="radio-option">
-              <input type="radio" id="version-yes" x-model="needsSpecificVersion" value="yes" />
-              <label for="version-yes">Yes, need specific version</label>
-            </div>
-            <div class="radio-option">
-              <input type="radio" id="version-no" x-model="needsSpecificVersion" value="no" />
-              <label for="version-no">No, use existing</label>
-            </div>
+            <button
+              type="button"
+              class="btn"
+              :class="{ 'btn-success': needsSpecificVersion === 'yes', 'btn-secondary': needsSpecificVersion !== 'yes' }"
+              @click="needsSpecificVersion = 'yes'"
+            >
+              Yes, need specific version
+            </button>
+            <button
+              type="button"
+              class="btn"
+              :class="{ 'btn-success': needsSpecificVersion === 'no', 'btn-secondary': needsSpecificVersion !== 'no' }"
+              @click="needsSpecificVersion = 'no'"
+            >
+              No, use existing
+            </button>
           </div>
         </div>
 
         <div x-show="needsSpecificVersion === 'yes'">
-          <div class="info-box">Add a new version to the existing recipe:</div>
-
-          <div class="input-group">
-            <label for="newVersion">New Version:</label>
-            <input type="text" id="newVersion" x-model="newVersion" placeholder="e.g., 1.2.3" />
-          </div>
-
+          <div class="info-box">First run checksum to get all the available versions:</div>
           <div class="command-box">
             <span x-text="'spack checksum -b ' + getRecipeName()"></span>
             <button class="play-btn" @click="runSpackChecksum()" :disabled="apiStates.runningChecksum">
               <span x-show="!apiStates.runningChecksum">Run</span>
               <span x-show="apiStates.runningChecksum">Running...</span>
             </button>
+          </div>
+
+          <div class="input-group">
+            <label for="newVersion">Enter the new version to add:</label>
+            <input type="text" id="newVersion" x-model="newVersion" placeholder="e.g., 1.2.3" />
           </div>
 
           <div x-show="apiResults.checksums" class="success-box">
@@ -2126,7 +2133,7 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
           </div>
 
           <div x-show="apiResults.checksums && apiResults.checksums.success" class="warning-box">
-            <strong>Manual Step:</strong> Edit the recipe file in the next step to add the new version and SHA256 checksum from the output above.
+            <strong>Manual Step:</strong> Copy the line above and edit the recipe file in the next step to add the new version and SHA256 checksum. If your new version is not in the list, you can add it manually.
           </div>
         </div>
 
@@ -2212,18 +2219,30 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
               <div class="input-group">
                 <label>Does the project have GitHub releases/tags/commit?</label>
                 <div class="radio-group">
-                  <div class="radio-option">
-                    <input type="radio" id="releases-yes" x-model="hasReleases" value="yes" />
-                    <label for="releases-yes">Yes, has releases/tags</label>
-                  </div>
-                  <div class="radio-option">
-                    <input type="radio" id="releases-no" x-model="hasReleases" value="no" />
-                    <label for="releases-no">No releases, use latest commit</label>
-                  </div>
-                  <div class="radio-option">
-                    <input type="radio" id="releases-nothing" x-model="hasReleases" value="nothing" />
-                    <label for="releases-nothing">Nothing, create blank template</label>
-                  </div>
+                  <button
+                    type="button"
+                    class="btn"
+                    :class="{ 'btn-success': hasReleases === 'yes', 'btn-secondary': hasReleases !== 'yes' }"
+                    @click="hasReleases = 'yes'"
+                  >
+                    Yes, has releases/tags
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    :class="{ 'btn-success': hasReleases === 'no', 'btn-secondary': hasReleases !== 'no' }"
+                    @click="hasReleases = 'no'"
+                  >
+                    No releases, use latest commit
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    :class="{ 'btn-success': hasReleases === 'nothing', 'btn-secondary': hasReleases !== 'nothing' }"
+                    @click="hasReleases = 'nothing'"
+                  >
+                    Nothing, create blank template
+                  </button>
                 </div>
               </div>
 
@@ -2332,14 +2351,22 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
             <div class="input-group">
               <label>Do you need to add a specific version to the recipe?</label>
               <div class="radio-group">
-                <div class="radio-option">
-                  <input type="radio" id="version-yes-new" x-model="needsSpecificVersion" value="yes" />
-                  <label for="version-yes-new">Yes, add a new version</label>
-                </div>
-                <div class="radio-option">
-                  <input type="radio" id="version-no-new" x-model="needsSpecificVersion" value="no" />
-                  <label for="version-no-new">No, proceed to editor</label>
-                </div>
+                <button
+                  type="button"
+                  class="btn"
+                  :class="{ 'btn-success': needsSpecificVersion === 'yes', 'btn-secondary': needsSpecificVersion !== 'yes' }"
+                  @click="needsSpecificVersion = 'yes'"
+                >
+                  Yes, add a new version
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  :class="{ 'btn-success': needsSpecificVersion === 'no', 'btn-secondary': needsSpecificVersion !== 'no' }"
+                  @click="needsSpecificVersion = 'no'"
+                >
+                  No, proceed to editor
+                </button>
               </div>
             </div>
 
@@ -2609,6 +2636,8 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
           • Other:
           <a href="https://github.com/wtsi-hgi/spack-repo/tree/main/packages/samtools/package.py" target="_blank" style="color: #333; text-decoration: underline"><code>samtools</code></a
           ><br /><br />
+
+          Python dependencies must have type=("build", "run") on the depends_on() line.
         </div>
 
 
@@ -2859,14 +2888,22 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
           <br /><br />
           <strong>Do you have collaborator access?</strong>
           <div class="radio-group" style="margin-top: 10px">
-            <div class="radio-option">
-              <input type="radio" id="access-yes" x-model="hasCollaboratorAccess" value="yes" />
-              <label for="access-yes">Yes, I have access</label>
-            </div>
-            <div class="radio-option">
-              <input type="radio" id="access-no" x-model="hasCollaboratorAccess" value="no" />
-              <label for="access-no">No, I need to request access</label>
-            </div>
+            <button
+              type="button"
+              class="btn"
+              :class="{ 'btn-success': hasCollaboratorAccess === 'yes', 'btn-secondary': hasCollaboratorAccess !== 'yes' }"
+              @click="hasCollaboratorAccess = 'yes'"
+            >
+              Yes, I have access
+            </button>
+            <button
+              type="button"
+              class="btn"
+              :class="{ 'btn-success': hasCollaboratorAccess === 'no', 'btn-secondary': hasCollaboratorAccess !== 'no' }"
+              @click="hasCollaboratorAccess = 'no'"
+            >
+              No, I need to request access
+            </button>
           </div>
 
           <!-- Access Request Form -->
