@@ -780,11 +780,9 @@ class SpackService:
 
                 # Look for created py-* package in packages directory
                 packages_dir = creator_dir / "packages"
-                py_packages = list(packages_dir.glob(f"py-{package_name}*"))
-
-                if not py_packages:
-                    # Try without py- prefix in case it was created differently
-                    py_packages = list(packages_dir.glob("py-*"))
+                # Always use the broader pattern to capture all packages created by PyPackageCreator
+                # including dependencies, not just the main package
+                py_packages = list(packages_dir.glob("py-*"))
 
                 if py_packages:
                     # Move all created packages to session (PyPackageCreator can create multiple recipes)
