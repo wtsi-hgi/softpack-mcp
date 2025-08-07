@@ -33,6 +33,10 @@
           // Validation state
           validationCompleted: false,
 
+          // Installation options
+          installVersion: "",
+          skipInstallValidation: false,
+
           // Workflow state
           recipeExists: "",
           recipeChecking: false,
@@ -189,51 +193,59 @@
 
           // Simple compression using base64 and gzip-like compression
           compressData(data) {
-            // Remove unnecessary whitespace and use shorter property names
-            const compressed = data
-              .replace(/\s+/g, ' ')
-              .replace(/"([^"]+)":/g, (match, key) => {
-                // Use shorter property names for common keys
-                const shortNames = {
-                  'sessionId': 's',
-                  'currentStep': 'c',
-                  'packageName': 'p',
-                  'pypiName': 'pn',
-                  'packageType': 'pt',
-                  'recipeExists': 're',
-                  'needsSpecificVersion': 'nsv',
-                  'newVersion': 'nv',
-                  'pypiSuccess': 'ps',
-                  'foundInOfficial': 'fo',
-                  'hasReleases': 'hr',
-                  'releaseUrl': 'ru',
-                  'repoUrl': 'rpu',
-                  'buildSuccess': 'bs',
-                  'validationSuccess': 'vs',
-                  'customValidationScript': 'cvs',
-                  'hashSelection': 'hs',
-                  'prUrl': 'pu',
-                  'selectedRecipe': 'sr',
-                  'recipeContent': 'rc',
-                  'validationResult': 'vr',
-                  'installOutput': 'io',
-                  'validationOutput': 'vo',
-                  'showDetailedLog': 'sdl',
-                  'apiResults': 'ar',
-                  'modifications': 'm',
-                  'hasCollaboratorAccess': 'hca',
-                  'githubUsername': 'gu',
-                  'timestamp': 't'
-                };
-                return `"${shortNames[key] || key}":`;
-              });
+            try {
+              // Remove unnecessary whitespace and use shorter property names
+              const compressed = data
+                .replace(/\s+/g, ' ')
+                .replace(/"([^"]+)":/g, (match, key) => {
+                  // Use shorter property names for common keys
+                  const shortNames = {
+                    'sessionId': 's',
+                    'currentStep': 'c',
+                    'packageName': 'p',
+                    'pypiName': 'pn',
+                    'packageType': 'pt',
+                    'recipeExists': 're',
+                                'needsSpecificVersion': 'nsv',
+            'newVersion': 'nv',
+            'installVersion': 'iv',
+            'skipInstallValidation': 'siv',
+                    'pypiSuccess': 'ps',
+                    'foundInOfficial': 'fo',
+                    'hasReleases': 'hr',
+                    'releaseUrl': 'ru',
+                    'repoUrl': 'rpu',
+                    'buildSuccess': 'bs',
+                    'validationSuccess': 'vs',
+                    'customValidationScript': 'cvs',
+                    'hashSelection': 'hs',
+                    'prUrl': 'pu',
+                    'selectedRecipe': 'sr',
+                    'recipeContent': 'rc',
+                    'validationResult': 'vr',
+                    'installOutput': 'io',
+                    'validationOutput': 'vo',
+                    'showDetailedLog': 'sdl',
+                    'apiResults': 'ar',
+                    'modifications': 'm',
+                    'hasCollaboratorAccess': 'hca',
+                    'githubUsername': 'gu',
+                    'timestamp': 't'
+                  };
+                  return `"${shortNames[key] || key}":`;
+                });
 
-            return btoa(compressed);
+              // Use encodeURIComponent to handle Unicode characters safely
+              return btoa(encodeURIComponent(compressed));
+            } catch (error) {
+              console.warn('Compression failed, using original data:', error);
+              return btoa(encodeURIComponent(data));
+            }
           },
 
           decompressData(compressedData) {
             try {
-              const decompressed = atob(compressedData);
+              const decompressed = decodeURIComponent(atob(compressedData));
 
               // Restore original property names
               const restored = decompressed.replace(/"([^"]+)":/g, (match, key) => {
@@ -244,8 +256,10 @@
                   'pn': 'pypiName',
                   'pt': 'packageType',
                   're': 'recipeExists',
-                  'nsv': 'needsSpecificVersion',
-                  'nv': 'newVersion',
+                              'nsv': 'needsSpecificVersion',
+            'nv': 'newVersion',
+            'iv': 'installVersion',
+            'siv': 'skipInstallValidation',
                   'ps': 'pypiSuccess',
                   'fo': 'foundInOfficial',
                   'hr': 'hasReleases',
@@ -287,8 +301,10 @@
               pypiName: fullData.pypiName,
               packageType: fullData.packageType,
               recipeExists: fullData.recipeExists,
-              needsSpecificVersion: fullData.needsSpecificVersion,
-              newVersion: fullData.newVersion,
+                          needsSpecificVersion: fullData.needsSpecificVersion,
+            newVersion: fullData.newVersion,
+            installVersion: fullData.installVersion,
+            skipInstallValidation: fullData.skipInstallValidation,
               pypiSuccess: fullData.pypiSuccess,
               foundInOfficial: fullData.foundInOfficial,
               hasReleases: fullData.hasReleases,
@@ -324,8 +340,10 @@
               pypiName: this.pypiName,
               packageType: this.packageType,
               recipeExists: this.recipeExists,
-              needsSpecificVersion: this.needsSpecificVersion,
-              newVersion: this.newVersion,
+                          needsSpecificVersion: this.needsSpecificVersion,
+            newVersion: this.newVersion,
+            installVersion: this.installVersion,
+            skipInstallValidation: this.skipInstallValidation,
               pypiSuccess: this.pypiSuccess,
               foundInOfficial: this.foundInOfficial,
               hasReleases: this.hasReleases,
@@ -420,6 +438,8 @@
             this.recipeExists = data.recipeExists || "";
             this.needsSpecificVersion = data.needsSpecificVersion || "";
             this.newVersion = data.newVersion || "";
+            this.installVersion = data.installVersion || "";
+            this.skipInstallValidation = data.skipInstallValidation || false;
             this.pypiSuccess = data.pypiSuccess || "";
             this.foundInOfficial = data.foundInOfficial || "";
             this.hasReleases = data.hasReleases || "";
@@ -494,6 +514,27 @@
 
           // Watch for changes to packageName and auto-convert
           init() {
+            // Ensure apiResults is properly initialized
+            if (!this.apiResults) {
+              this.apiResults = {
+                sessionInfo: null,
+                versions: null,
+                checksums: null,
+                pypiResult: null,
+                copyResult: null,
+                urlResult: null,
+                blankRecipeResult: null,
+                installResult: null,
+                validationResult: null,
+                uninstallResult: null,
+                commitInfo: null,
+                prResult: null,
+                recipes: null,
+                recipeCreateResult: null,
+                accessRequestResult: null,
+              };
+            }
+
             this.$watch('packageName', (value, oldValue) => {
               // Always store the original name as pypiName
               this.pypiName = value;
@@ -511,6 +552,8 @@
             this.$watch('recipeExists', () => this.saveSessionOnChange());
             this.$watch('needsSpecificVersion', () => this.saveSessionOnChange());
             this.$watch('newVersion', () => this.saveSessionOnChange());
+            this.$watch('installVersion', () => this.saveSessionOnChange());
+            this.$watch('skipInstallValidation', () => this.saveSessionOnChange());
             this.$watch('pypiSuccess', () => this.saveSessionOnChange());
             this.$watch('foundInOfficial', () => this.saveSessionOnChange());
             this.$watch('hasReleases', () => this.saveSessionOnChange());
@@ -541,7 +584,12 @@
           // Auto-save session state on any change
           saveSessionOnChange() {
             if (this.sessionId) {
-              this.saveSessionState();
+              try {
+                this.saveSessionState();
+              } catch (error) {
+                console.warn('Failed to save session state:', error);
+                // Don't show error to user as this is a background operation
+              }
             }
           },
 
@@ -616,7 +664,9 @@
                 }
                 return this.validationResult && this.validationResult.is_valid;
               case 4:
-                return this.buildSuccess === "yes" && this.validationCompleted;
+                // Allow proceeding if build and validation are successful, or if user skipped them
+                return (this.buildSuccess === "yes" && this.validationCompleted) ||
+                       (this.skipInstallValidation);
               case 5:
                 return true; // Always allow proceeding on step 5 to add another package
               default:
@@ -631,6 +681,36 @@
               if (this.packageName.trim() === "" || this.packageType === "") {
                 return; // Don't proceed if validation fails
               }
+            }
+
+            // Handle step 4 skip functionality
+            if (this.currentStep === 4 && this.skipInstallValidation) {
+              const confirmed = confirm(
+                "⚠️ Warning: You are about to skip installation and validation.\n\n" +
+                "This means:\n" +
+                "• The package will not be built or tested\n" +
+                "• You won't know if the recipe works correctly\n" +
+                "• You may encounter issues later\n\n" +
+                "Are you sure you want to proceed?"
+              );
+
+              if (!confirmed) {
+                return;
+              }
+
+              // Mark as successful and proceed to next step
+              this.buildSuccess = "yes";
+              this.validationCompleted = true;
+              this.apiResults.installResult = {
+                success: true,
+                package_name: this.getRecipeName(),
+                message: "Installation and validation skipped by user",
+              };
+              this.apiResults.validationResult = {
+                success: true,
+                package_name: this.getRecipeName(),
+                message: "Validation skipped by user",
+              };
             }
 
             if (this.canProceed() && this.currentStep < this.totalSteps) {
@@ -1041,6 +1121,11 @@
                 package_name: this.getRecipeName(),
                 session_id: this.sessionId,
               };
+
+              // Add version if specified
+              if (this.installVersion && this.installVersion.trim()) {
+                requestBody.version = this.installVersion.trim();
+              }
 
               const response = await fetch(`${this.apiBaseUrl}/spack/install/stream`, {
                 method: "POST",
@@ -1847,6 +1932,10 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
             this.customValidationScript = "";
             this.showDetailedLog = false;
 
+            // Reset installation options
+            this.installVersion = "";
+            this.skipInstallValidation = false;
+
             // Clear outputs
             this.clearInstallOutput();
             this.clearValidationOutput();
@@ -1878,6 +1967,8 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
             this.recipeChecking = false;
             this.needsSpecificVersion = "";
             this.newVersion = "";
+            this.installVersion = "";
+            this.skipInstallValidation = false;
             this.pypiSuccess = "";
             this.foundInOfficial = "";
             this.officialChecking = false;
@@ -2507,7 +2598,7 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
               <div x-show="apiResults.pypiResult && apiResults.pypiResult.moved_packages && apiResults.pypiResult.moved_packages.length > 1" style="margin-top: 10px; padding: 10px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; font-size: 13px">
                 <strong>📦 Multiple Recipes Created:</strong>
                 <div style="margin-top: 5px; font-family: monospace; font-size: 12px;">
-                  <template x-for="package in apiResults.pypiResult.moved_packages" :key="package.name">
+                  <template x-for="package in (apiResults.pypiResult && apiResults.pypiResult.moved_packages || [])" :key="package.name">
                     <div style="margin: 2px 0; padding: 2px 0;">
                       <span x-text="package.name" :style="package.name === 'py-' + packageName ? 'font-weight: bold; color: #155724;' : 'color: #856404;'"></span>
                       <span x-show="package.name === 'py-' + packageName" style="color: #155724; margin-left: 5px;">(Main Package)</span>
@@ -2524,7 +2615,7 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
               <div x-show="apiResults.copyResult && apiResults.copyResult.copied_files && apiResults.copyResult.copied_files.length > 0" style="margin-top: 10px; padding: 10px; background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 4px; font-size: 13px">
                 <strong>📁 Files Copied from Repository:</strong>
                 <div style="margin-top: 5px; font-family: monospace; font-size: 12px;">
-                  <template x-for="file in apiResults.copyResult.copied_files" :key="file">
+                  <template x-for="file in (apiResults.copyResult && apiResults.copyResult.copied_files || [])" :key="file">
                     <div style="margin: 2px 0; padding: 2px 0; color: #0c5460;">
                       <span x-text="file"></span>
                     </div>
@@ -2693,8 +2784,39 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
 
         <div class="info-box">Now let's build the package and test it:</div>
 
+        <!-- Installation Options -->
+        <div class="input-group" style="margin-bottom: 20px;">
+          <label for="installVersion">Install Specific Version (optional):</label>
+          <input
+            type="text"
+            id="installVersion"
+            x-model="installVersion"
+            placeholder="e.g., 1.2.3 (leave empty for latest)"
+            style="width: 100%;"
+          />
+          <small style="color: #666; font-size: 12px">Leave empty to install the latest version available in the recipe.</small>
+        </div>
+
+        <!-- Skip Installation Option -->
+        <div class="warning-box" style="margin-bottom: 20px;">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <input
+              type="checkbox"
+              id="skipInstallValidation"
+              x-model="skipInstallValidation"
+              style="margin: 0;"
+            />
+            <label for="skipInstallValidation" style="margin: 0; font-weight: bold; color: #856404;">
+              Skip installation and validation
+            </label>
+          </div>
+          <small style="color: #856404; font-size: 12px">
+            ⚠️ Only use this if you're confident the recipe is correct. You won't know if the package builds or works properly. Use the "Next" button below to skip.
+          </small>
+        </div>
+
         <div class="command-box">
-          <span x-text="'spack install ' + getRecipeName()"></span>
+          <span x-text="'spack install ' + getRecipeName() + (installVersion ? ' @' + installVersion : '')"></span>
           <button class="play-btn" @click="runSpackInstall()" :disabled="apiStates.installingPackage">
             <span x-show="!apiStates.installingPackage">Build</span>
             <span x-show="apiStates.installingPackage">Installing...</span>
@@ -2739,14 +2861,14 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #ddd;">
                 <strong style="color: #333; font-family: inherit;">Build Log Contents (spack-build-out.txt)</strong>
                 <button
-                  @click="copyToClipboard(apiResults.installResult.detailed_failed_log)"
+                  @click="copyToClipboard(apiResults.installResult && apiResults.installResult.detailed_failed_log || '')"
                   class="copy-btn"
                   style="font-size: 11px; padding: 4px 8px;"
                 >
                   Copy All
                 </button>
               </div>
-              <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; color: #333;" x-text="apiResults.installResult.detailed_failed_log"></pre>
+              <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; color: #333;" x-text="apiResults.installResult && apiResults.installResult.detailed_failed_log || ''"></pre>
             </div>
           </div>
 
@@ -2839,7 +2961,10 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
       <div x-show="sessionId" class="step" :class="{ active: currentStep === 5 }">
         <h2 class="step-title">Step 5: Create Pull Request</h2>
 
-        <div class="success-box">🎉 Congratulations! Your package builds and validates successfully.</div>
+        <div class="success-box">
+          <span x-show="!skipInstallValidation">🎉 Congratulations! Your package builds and validates successfully.</span>
+          <span x-show="skipInstallValidation">🎉 Package recipe created successfully. Installation and validation were skipped.</span>
+        </div>
 
         <div class="info-box">Now prepare a pull request by cloning the repository, copying your changes, and pushing a new branch:</div>
 
@@ -3004,3 +3129,5 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
     </div>
   </body>
 </html>
+        };
+      };
