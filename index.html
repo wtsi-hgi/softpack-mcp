@@ -52,7 +52,6 @@
           validationSuccess: "",
 
           customValidationScript: "",
-          validationOutput: [],
           hashSelection: "",
           prUrl: "",
 
@@ -612,16 +611,6 @@
             return prefixes[this.packageType] + convertedName;
           },
 
-          getValidationScript() {
-            if (!this.packageType || !this.packageName) return "";
-            const scripts = {
-              python: `python -c "import ${this.packageName}"`,
-              r: `Rscript -e "library(${this.packageName})"`,
-              other: "# Check package documentation for validation",
-            };
-            return scripts[this.packageType] || "";
-          },
-
           getDefaultValidationScript() {
             if (!this.packageType || !this.packageName) return "";
             const scripts = {
@@ -946,7 +935,6 @@
               return true; // If the call succeeds, session exists
             } catch (error) {
               // If the call fails, likely the session doesn't exist or has expired
-              console.debug("Session check failed (session may have expired):", error);
               return false;
             }
           },
@@ -1004,22 +992,7 @@
             }
           },
 
-          getVersionsWithChecksumsDisplay() {
-            if (!this.apiResults.versions?.version_info) return "";
 
-            const versionInfo = this.apiResults.versions.version_info;
-            const checksummed = versionInfo.filter((v) => v.has_checksum).length;
-            const total = versionInfo.length;
-
-            return `${total} versions found (${checksummed} with checksums available)`;
-          },
-
-          getVersionsForDisplay() {
-            if (!this.apiResults.versions?.version_info) {
-              return this.apiResults.versions?.versions || [];
-            }
-            return this.apiResults.versions.version_info.map((v) => v.version);
-          },
 
           async runSpackChecksum() {
             await this.ensureSession();
@@ -1298,23 +1271,7 @@
             }
           },
 
-          async runSpackUninstallAll() {
-            await this.ensureSession();
-            this.apiStates.uninstallingPackage = true;
-            try {
-              const result = await this.apiRequest("/spack/uninstall-all", "POST", {
-                package_name: this.getRecipeName(),
-                session_id: this.sessionId,
-              });
-              this.apiResults.uninstallResult = result;
-              return result;
-            } catch (error) {
-              console.error("Failed to uninstall package:", error);
-              this.showError("Failed to uninstall package. Please try again.");
-            } finally {
-              this.apiStates.uninstallingPackage = false;
-            }
-          },
+
 
           // Git API Functions
           async runGetCommitInfo() {
@@ -1409,7 +1366,6 @@
 
           async autoCreateRecipe() {
             this.apiStates.autoCreatingRecipe = true;
-            console.log("Before checkOfficialRecipe");
 
             try {
               // For Python packages, check PyPI first
@@ -1438,13 +1394,11 @@
 
               // Check official Spack repository for all package types
               await this.checkOfficialRecipe();
-              console.log("After checkOfficialRecipe, foundInOfficial =", this.foundInOfficial);
 
               if (this.foundInOfficial === "yes") {
                 // Try to copy from official repo
                 try {
                   await this.runCopyPackage();
-                  console.log("After runCopyPackage, apiResults.copyResult =", this.apiResults.copyResult);
                   if (this.apiResults.copyResult && this.apiResults.copyResult.success) {
                     const copiedFilesInfo = this.getCopiedFilesInfo();
                     if (copiedFilesInfo) {
@@ -2666,7 +2620,6 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
                       });
                     }
                   "
-                  x-destroy="destroyAceEditor()"
                 ></div>
               </div>
 
@@ -3129,5 +3082,3 @@ DATE=$(git log -1 --format='%cd' --date=format:'%Y%m%d')`;
     </div>
   </body>
 </html>
-        };
-      };
