@@ -82,7 +82,7 @@
             id="packageName"
             x-model="packageName"
             placeholder="e.g., numpy, ggplot2, cmake, fastapi"
-            :class="packageName.trim() === '' ? 'invalid-input' : ''"
+            :class="step1ValidationAttempted && packageName.trim() === '' ? 'invalid-input' : ''"
             title="Please enter a package name to continue"
           />
           <div x-show="step1ValidationAttempted && packageName.trim() === ''" class="error-message">
@@ -98,7 +98,7 @@
           <select
             id="packageType"
             x-model="packageType"
-            :class="packageType === '' ? 'invalid-input' : ''"
+            :class="step1ValidationAttempted && packageType === '' ? 'invalid-input' : ''"
             title="Please select a package type to continue"
           >
             <option value="">Select package type...</option>
