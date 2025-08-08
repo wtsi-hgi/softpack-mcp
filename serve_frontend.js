@@ -22,10 +22,10 @@ app.use(cors({
     allowedHeaders: ['Content-Type']
 }));
 
-// Custom middleware to handle HTML files with environment variable injection
+// Custom middleware to handle HTML/JS files with environment variable injection
 app.use((req, res, next) => {
-    // Handle HTML files and root path
-    if (req.path.endsWith('.html') || req.path === '/') {
+    // Handle HTML/JS files and root path
+    if (req.path === '/' || req.path.endsWith('.html') || req.path.endsWith('.js')) {
         let filePath;
         if (req.path === '/') {
             filePath = path.join(DIRECTORY, 'index.html');
@@ -42,11 +42,20 @@ app.use((req, res, next) => {
                 const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8000';
                 console.log(`API base URL: ${apiBaseUrl}`);
 
-                // Replace placeholder with actual API base URL
+                // Replace placeholders in both HTML and JS
+                // 1) {{API_BASE_URL}} inside code
                 content = content.replace(/\{\{API_BASE_URL\}\}/g, apiBaseUrl);
+                // 2) Optionally inject a global in JS for runtime fallback
+                if (filePath.endsWith('.js')) {
+                    content = `window.__API_BASE_URL = ${JSON.stringify(apiBaseUrl)};\n` + content;
+                }
 
                 // Send the modified content
-                res.setHeader('Content-Type', 'text/html; charset=utf-8');
+                if (filePath.endsWith('.js')) {
+                    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+                } else {
+                    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+                }
                 res.send(content);
                 return;
             } catch (error) {
