@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: softpack-frontend
+    environment:
+      - API_BASE_URL=/softpack-recipe-creator/api
+      - SOFTPACK_PORT=3000
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    command: ["node", "serve_frontend.js"]
+
+  nginx:
+    image: nginx:alpine
+    container_name: softpack-nginx
+    network_mode: host
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+
+networks:
+  default:
+    name: softpack-net

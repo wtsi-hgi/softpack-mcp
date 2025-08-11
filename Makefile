@@ -4,9 +4,12 @@
 help:
 	@echo "Available targets:"
 	@echo "  init     - Initialize the project (install dependencies, setup pre-commit)"
-	@echo "  debug    - Run the server locally for debugging"
-	@echo "  prod     - Run the server in production mode"
-	@echo "  frontend - Serve the HTML frontend on port 8001"
+	@echo "  debug    - Run the backend locally for debugging"
+	@echo "  backend  - Run backend in foreground on :8000"
+	@echo "  backend-start - Run backend in background on :8000"
+	@echo "  backend-stop  - Stop background backend process"
+	@echo "  prod     - Run backend + dockerized frontend+nginx"
+	@echo "  frontend - Run only the frontend via docker compose on port 3000"
 	@echo "  test-integration - Run the dit package integration test"
 	@echo "  clean    - Clean cache and temporary files"
 	@echo "  help     - Show this help message"
@@ -38,12 +41,37 @@ debug:
 	@echo "📖 API docs at http://localhost:8000/docs"
 	@if [ -f .env ]; then export $$(cat .env | grep -E '^SOFTPACK_' | xargs); fi && SOFTPACK_DEBUG=true /home/ubuntu/.local/bin/uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Run server in production mode (both backend and frontend)
+# Run backend in foreground (production-like)
+backend:
+	@echo "🔗 Starting backend on http://0.0.0.0:8000"
+	@if [ -f .env ]; then export $$(cat .env | grep -E '^SOFTPACK_' | xargs); fi && /home/ubuntu/.local/bin/uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000
+
+# Run backend in background
+backend-start:
+	@echo "🔗 Starting backend in background on http://0.0.0.0:8000"
+	@mkdir -p logs
+	@if [ -f .env ]; then export $$(cat .env | grep -E '^SOFTPACK_' | xargs); fi; \
+		nohup /home/ubuntu/.local/bin/uv run uvicorn softpack_mcp.main:app --host 0.0.0.0 --port 8000 > logs/backend.log 2>&1 & echo $$! > logs/backend.pid; \
+		echo "✅ Backend PID $$(cat logs/backend.pid)"
+
+backend-stop:
+	@echo "🛑 Stopping backend"
+	@if [ -f logs/backend.pid ]; then kill $$(cat logs/backend.pid) >/dev/null 2>&1 || true; rm -f logs/backend.pid; else pkill -f "uvicorn softpack_mcp.main:app" >/dev/null 2>&1 || true; fi
+
+# Run production services (backend on host + dockerized frontend + nginx)
 prod:
-	@echo "🚀 Starting Softpack MCP in production mode..."
-	@echo "🔗 API Server: http://0.0.0.0:8000"
-	@echo "🌐 Frontend: http://0.0.0.0:80"
-	@if [ -f .env ]; then export $$(cat .env | xargs); fi && /usr/bin/python3 run_both.py
+	@echo "🚀 Starting backend + dockerized frontend + nginx..."
+	$(MAKE) backend-start
+	@echo "   🌐 Frontend: http://0.0.0.0:80 (via nginx)"
+	@echo "   🔗 API proxied at /softpack-recipe-creator/api → backend :8000"
+	docker compose up -d --build
+	@echo "✅ Services up. Use 'docker compose logs -f' to view logs."
+
+down:
+	@echo "🛑 Stopping backend"
+	$(MAKE) backend-stop
+	@echo "🛑 Stopping frontend"
+	docker compose down
 
 # Clean cache and temporary files
 clean:
@@ -56,13 +84,12 @@ clean:
 	find . -name "*.pyo" -delete
 	@echo "✅ Cleanup complete!"
 
-# Serve frontend on port 8001
+# Serve frontend via docker compose on port 3000 (no nginx)
 frontend:
-	@echo "🌐 Starting frontend server on port 8001..."
-	@echo "📁 Frontend will be available at http://localhost:8001"
-	@echo "🔗 API server should be running on http://localhost:8000"
-	@echo "⏹️  Press Ctrl+C to stop the server"
-	@if [ -f .env ]; then export $$(cat .env | xargs); fi && API_BASE_URL=$${API_BASE_URL:-http://localhost:8000} SOFTPACK_PORT=8001 /usr/bin/node serve_frontend.js
+	@echo "🌐 Starting frontend container on port 3000..."
+	@echo "📁 Frontend will be available at http://localhost:3000"
+	@echo "🔗 API base is controlled by API_BASE_URL in docker-compose.yml"
+	docker compose up -d --build frontend
 
 
 # Run integration test for dit package
