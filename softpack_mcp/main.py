@@ -7,21 +7,23 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mcp import FastApiMCP
-from loguru import logger
-
-from .config import get_settings
-from .mcp_schema_patch import apply_fastapi_mcp_schema_patch
-from .tools.access import router as access_router
-from .tools.git import router as git_router
-from .tools.recipes import router as recipes_router
-from .tools.sessions import router as sessions_router
-from .tools.spack import router as spack_router
-from .utils.exceptions import setup_exception_handlers
-from .utils.logging import setup_logging
 
 # Ensure FastAPI-MCP emits JSON Schema 2020-12 compliant tool input schemas
 # by applying our runtime patch before constructing the MCP server
-apply_fastapi_mcp_schema_patch()
+from .mcp_schema_patch import apply_fastapi_mcp_schema_patch  # noqa: E402
+
+apply_fastapi_mcp_schema_patch()  # noqa: F401
+
+from loguru import logger  # noqa: E402
+
+from .config import get_settings  # noqa: E402
+from .tools.access import router as access_router  # noqa: E402
+from .tools.git import router as git_router  # noqa: E402
+from .tools.recipes import router as recipes_router  # noqa: E402
+from .tools.sessions import router as sessions_router  # noqa: E402
+from .tools.spack import router as spack_router  # noqa: E402
+from .utils.exceptions import setup_exception_handlers  # noqa: E402
+from .utils.logging import setup_logging  # noqa: E402
 
 
 @asynccontextmanager
