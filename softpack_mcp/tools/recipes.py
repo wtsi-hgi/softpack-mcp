@@ -461,7 +461,7 @@ async def delete_recipe(
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> OperationResult:
     """
-    Delete a recipe file from a session.
+    Delete a recipe directory from a session.
 
     Args:
         session_id: Session ID
@@ -479,31 +479,30 @@ async def delete_recipe(
 
         recipe_path = _get_recipe_path(session_dir, package_name)
 
-        if not recipe_path.exists():
+        package_dir = recipe_path.parent
+
+        # If neither the recipe file nor the package directory exists, return 404
+        if not (recipe_path.exists() or package_dir.exists()):
             raise HTTPException(
                 status_code=404, detail=f"Recipe for package '{package_name}' not found in session {session_id}"
             )
 
-        # Delete the recipe file
-        recipe_path.unlink()
-
-        # Try to remove the package directory if it's empty
-        package_dir = recipe_path.parent
-        try:
-            if package_dir.exists() and not any(package_dir.iterdir()):
-                package_dir.rmdir()
-        except OSError:
-            # Directory not empty or other error, ignore
-            pass
+        # Always remove the entire package directory to ensure patch files and other assets are removed
+        if package_dir.exists():
+            shutil.rmtree(package_dir, ignore_errors=False)
+        elif recipe_path.exists():
+            # Fallback: in the unlikely event the directory is missing but file exists
+            recipe_path.unlink()
 
         logger.info("Deleted recipe", session_id=session_id, package_name=package_name)
 
         return OperationResult(
             success=True,
-            message=f"Successfully deleted recipe for package '{package_name}'",
+            message=f"Successfully deleted recipe directory for package '{package_name}'",
             details={
                 "package_name": package_name,
                 "file_path": f"spack-repo/packages/{package_name}/package.py",
+                "deleted_dir": f"spack-repo/packages/{package_name}",
             },
         )
 

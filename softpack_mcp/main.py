@@ -76,4 +76,4 @@ app = create_app()
 
 # create and mount the mcp server
 mcp_server = FastApiMCP(app)
-mcp_server.mount()
+mcp_server.mount_http()

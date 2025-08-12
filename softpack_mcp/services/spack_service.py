@@ -291,6 +291,88 @@ class SpackService:
         logger.debug("No valid installation digest found in output")
         return None
 
+    def _collect_build_logs_from_output(self, full_output: str) -> str | None:
+        """Collect spack build logs referenced in output or via recent stage dirs.
+
+        Searches the provided output for explicit spack build log file paths as well as
+        stage directory paths, and attempts to read their corresponding
+        `spack-build-out.txt` files. Falls back to scanning recent stage directories
+        under `/tmp/*/spack-stage/` when none are discovered in output.
+
+        Returns a single concatenated string of the collected logs, or None if none
+        could be found.
+        """
+        try:
+            import re
+
+            stage_paths: list[str] = []
+            log_file_paths: list[str] = []
+
+            # Look for explicit spack-build-out.txt file paths in the output
+            explicit_log_pattern = r"/tmp/[^/\s]*/spack-stage/spack-stage-[^/\s]+/spack-build-out\.txt"
+            explicit_logs = re.findall(explicit_log_pattern, full_output)
+            log_file_paths.extend(explicit_logs)
+
+            # Look for spack-stage directory paths in the output
+            stage_pattern = r"/tmp/[^/\s]*/spack-stage/spack-stage-[^/\s]+"
+            matches = re.findall(stage_pattern, full_output)
+            stage_paths.extend(matches)
+
+            # Also look for other common spack build directory patterns
+            build_pattern = r"/tmp/[^/\s]*/spack-build-[^/\s]+"
+            matches = re.findall(build_pattern, full_output)
+            stage_paths.extend(matches)
+
+            # If no paths found in output, search for recent stage directories
+            if not stage_paths and not log_file_paths:
+                logger.warning("No stage or log paths found in output, searching filesystem")
+                import glob
+
+                recent_stages = glob.glob("/tmp/*/spack-stage/spack-stage-*")
+                # Sort by modification time, get most recent ones
+                recent_stages.sort(key=lambda x: Path(x).stat().st_mtime, reverse=True)
+                stage_paths.extend(recent_stages[:5])  # Take 5 most recent
+                logger.info(f"Found {len(stage_paths)} recent stage directories")
+
+            # Build a unique, ordered list of candidate log files
+            candidate_logs: list[Path] = []
+            seen: set[str] = set()
+
+            for file_path in log_file_paths:
+                if file_path not in seen:
+                    candidate_logs.append(Path(file_path))
+                    seen.add(file_path)
+
+            for stage_path in stage_paths:
+                file_path = str(Path(stage_path) / "spack-build-out.txt")
+                if file_path not in seen:
+                    candidate_logs.append(Path(file_path))
+                    seen.add(file_path)
+
+            logs: list[str] = []
+            for log_file in candidate_logs:
+                if log_file.exists():
+                    try:
+                        content = log_file.read_text(encoding="utf-8")
+                        logs.append(f"===== {log_file} =====\n" + content)
+                        logger.info(f"Successfully read build log: {log_file} ({len(content)} chars)")
+                    except Exception as e:  # noqa: BLE001
+                        error_msg = f"===== {log_file} (error reading: {e}) =====\n"
+                        logs.append(error_msg)
+                        logger.warning(f"Failed to read build log {log_file}: {e}")
+                else:
+                    logger.debug(f"Build log not found: {log_file}")
+
+            if logs:
+                logger.info(f"Collected {len(logs)} build logs for detailed_failed_log")
+                return "\n\n".join(logs)
+            else:
+                logger.warning("No spack-build-out.txt files found in discovered locations")
+                return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Failed to collect spack-build-out.txt logs: {e}")
+            return None
+
     async def search_packages(
         self,
         query: str = "",
@@ -397,65 +479,8 @@ class SpackService:
             message = f"Failed to install {spec}: {result['stderr']}"
             install_digest = None
             # Collect spack-build-out.txt from the build directory mentioned in output
-            detailed_failed_log = None
-            if session_id:
-                try:
-                    # Parse output to find spack stage directory paths
-                    full_output = result["stdout"] + result["stderr"]
-                    stage_paths = []
-
-                    # Look for spack-stage paths in the output
-                    import re
-
-                    stage_pattern = r"/tmp/[^/\s]*/spack-stage/spack-stage-[^/\s]+"
-                    matches = re.findall(stage_pattern, full_output)
-                    stage_paths.extend(matches)
-
-                    # Also look for other common spack build directory patterns
-                    build_pattern = r"/tmp/[^/\s]*/spack-build-[^/\s]+"
-                    matches = re.findall(build_pattern, full_output)
-                    stage_paths.extend(matches)
-
-                    # If no paths found in output, search for recent stage directories
-                    if not stage_paths:
-                        logger.warning("No stage paths found in output, searching filesystem")
-                        try:
-                            import glob
-
-                            recent_stages = glob.glob("/tmp/*/spack-stage/spack-stage-*")
-                            # Sort by modification time, get most recent ones
-                            recent_stages.sort(key=lambda x: Path(x).stat().st_mtime, reverse=True)
-                            stage_paths.extend(recent_stages[:5])  # Take 5 most recent
-                            logger.info(f"Found {len(stage_paths)} recent stage directories")
-                        except Exception as e:
-                            logger.warning(f"Failed to find recent stage directories: {e}")
-
-                    logger.info(f"Found {len(stage_paths)} spack stage/build directories in output")
-                    for path in stage_paths:
-                        logger.debug(f"Stage directory: {path}")
-
-                    logs = []
-                    for stage_path in stage_paths:
-                        log_file = Path(stage_path) / "spack-build-out.txt"
-                        if log_file.exists():
-                            try:
-                                content = log_file.read_text(encoding="utf-8")
-                                logs.append(f"===== {log_file} =====\n" + content)
-                                logger.info(f"Successfully read build log: {log_file} ({len(content)} chars)")
-                            except Exception as e:
-                                error_msg = f"===== {log_file} (error reading: {e}) =====\n"
-                                logs.append(error_msg)
-                                logger.warning(f"Failed to read build log {log_file}: {e}")
-                        else:
-                            logger.debug(f"Build log not found: {log_file}")
-
-                    if logs:
-                        detailed_failed_log = "\n\n".join(logs)
-                        logger.info(f"Collected {len(logs)} build logs for detailed_failed_log")
-                    else:
-                        logger.warning("No spack-build-out.txt files found in stage directories")
-                except Exception as e:
-                    logger.warning(f"Failed to collect spack-build-out.txt logs: {e}")
+            full_output = result["stdout"] + result["stderr"]
+            detailed_failed_log = self._collect_build_logs_from_output(full_output)
         return OperationResult(
             success=result["success"],
             message=message,
@@ -594,65 +619,8 @@ class SpackService:
                 message = f"Failed to install {spec} (return code: {returncode})"
                 install_digest = None
                 # Collect spack-build-out.txt from the build directory mentioned in output
-                detailed_failed_log = None
-                if session_id:
-                    try:
-                        # Parse output to find spack stage directory paths
-                        full_output = "\n".join(all_output)
-                        stage_paths = []
-
-                        # Look for spack-stage paths in the output
-                        import re
-
-                        stage_pattern = r"/tmp/[^/\s]*/spack-stage/spack-stage-[^/\s]+"
-                        matches = re.findall(stage_pattern, full_output)
-                        stage_paths.extend(matches)
-
-                        # Also look for other common spack build directory patterns
-                        build_pattern = r"/tmp/[^/\s]*/spack-build-[^/\s]+"
-                        matches = re.findall(build_pattern, full_output)
-                        stage_paths.extend(matches)
-
-                        # If no paths found in output, search for recent stage directories
-                        if not stage_paths:
-                            logger.warning("No stage paths found in output, searching filesystem")
-                            try:
-                                import glob
-
-                                recent_stages = glob.glob("/tmp/*/spack-stage/spack-stage-*")
-                                # Sort by modification time, get most recent ones
-                                recent_stages.sort(key=lambda x: Path(x).stat().st_mtime, reverse=True)
-                                stage_paths.extend(recent_stages[:5])  # Take 5 most recent
-                                logger.info(f"Found {len(stage_paths)} recent stage directories")
-                            except Exception as e:
-                                logger.warning(f"Failed to find recent stage directories: {e}")
-
-                        logger.info(f"Found {len(stage_paths)} spack stage/build directories in output")
-                        for path in stage_paths:
-                            logger.debug(f"Stage directory: {path}")
-
-                        logs = []
-                        for stage_path in stage_paths:
-                            log_file = Path(stage_path) / "spack-build-out.txt"
-                            if log_file.exists():
-                                try:
-                                    content = log_file.read_text(encoding="utf-8")
-                                    logs.append(f"===== {log_file} =====\n" + content)
-                                    logger.info(f"Successfully read build log: {log_file} ({len(content)} chars)")
-                                except Exception as e:
-                                    error_msg = f"===== {log_file} (error reading: {e}) =====\n"
-                                    logs.append(error_msg)
-                                    logger.warning(f"Failed to read build log {log_file}: {e}")
-                            else:
-                                logger.debug(f"Build log not found: {log_file}")
-
-                        if logs:
-                            detailed_failed_log = "\n\n".join(logs)
-                            logger.info(f"Collected {len(logs)} build logs for detailed_failed_log")
-                        else:
-                            logger.warning("No spack-build-out.txt files found in stage directories")
-                    except Exception as e:
-                        logger.warning(f"Failed to collect spack-build-out.txt logs: {e}")
+                full_output = "\n".join(all_output)
+                detailed_failed_log = self._collect_build_logs_from_output(full_output)
             yield SpackInstallStreamResult(
                 type="complete",
                 data=message,

@@ -114,6 +114,7 @@ async def install_package(
             version=request.version or "latest",
             install_digest=result.details.get("install_digest") if result.details else None,
             install_details=result.details,
+            detailed_failed_log=result.detailed_failed_log,
         )
     except Exception as e:
         logger.exception("Failed to install package", package=request.package_name, error=str(e))
