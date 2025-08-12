@@ -75,5 +75,19 @@ def create_app() -> FastAPI:
 app = create_app()
 
 # create and mount the mcp server
-mcp_server = FastApiMCP(app)
+mcp_server = FastApiMCP(
+    app,
+    exclude_operations=[
+        "request_collaborator_access",
+        "list_packages",
+        "install_package",
+        "uninstall_package",
+        "validate_package",
+        "uninstall_package_with_dependents",
+        "get_session_info",
+        "delete_session",
+        "health_check",
+    ],
+)
+
 mcp_server.mount_http()
