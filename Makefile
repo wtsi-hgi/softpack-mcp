@@ -89,7 +89,7 @@ frontend:
 	@echo "🌐 Starting frontend container on port 3000..."
 	@echo "📁 Frontend will be available at http://localhost:3000"
 	@echo "🔗 API base is controlled by API_BASE_URL in docker-compose.yml"
-	docker compose up -d --build frontend
+	SOFTPACK_PORT=8001 /usr/bin/node serve_frontend.js --reload
 
 
 # Run integration test for dit package

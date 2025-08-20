@@ -6,14 +6,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_mcp import FastApiMCP
-
-# Ensure FastAPI-MCP emits JSON Schema 2020-12 compliant tool input schemas
-# by applying our runtime patch before constructing the MCP server
-from .mcp_schema_patch import apply_fastapi_mcp_schema_patch  # noqa: E402
-
-apply_fastapi_mcp_schema_patch()  # noqa: F401
-
 from loguru import logger  # noqa: E402
 
 from .config import get_settings  # noqa: E402
@@ -80,21 +72,3 @@ def create_app() -> FastAPI:
 
 # Application instance
 app = create_app()
-
-# create and mount the mcp server
-mcp_server = FastApiMCP(
-    app,
-    exclude_operations=[
-        "request_collaborator_access",
-        "list_packages",
-        "install_package",
-        "uninstall_package",
-        "validate_package",
-        "uninstall_package_with_dependents",
-        "get_session_info",
-        "delete_session",
-        "health_check",
-    ],
-)
-
-mcp_server.mount_http()

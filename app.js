@@ -18,9 +18,14 @@ window.wizardApp = function () {
     notificationId: 0,
 
     // Notification helpers
-    addNotification(type, message) {
+    addNotification(type, message, durationSeconds = 3) {
       const id = ++this.notificationId;
       this.notifications.push({ id, type, message });
+      if (durationSeconds && durationSeconds > 0) {
+        setTimeout(() => {
+          this.removeNotification(id);
+        }, durationSeconds * 1000);
+      }
       return id;
     },
 

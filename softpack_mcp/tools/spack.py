@@ -173,6 +173,7 @@ async def install_package_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/event-stream",
+            "X-Accel-Buffering": "no",
         },
     )
 
@@ -490,7 +491,12 @@ async def validate_package_stream(
         return StreamingResponse(
             generate_error_stream(),
             media_type="text/plain",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+                "X-Accel-Buffering": "no",
+            },
         )
 
 
