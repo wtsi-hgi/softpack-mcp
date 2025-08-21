@@ -565,16 +565,29 @@ class SpackService:
 
             # Function to read from a stream and put results in queue
             async def read_stream(stream: asyncio.StreamReader, stream_type: str):
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
-                    line_data = line.decode("utf-8").rstrip()
-                    all_output.append(line_data)
+                try:
+                    while True:
+                        line = await stream.readline()
+                        if not line:
+                            break
+                        line_data = line.decode("utf-8").rstrip()
+                        all_output.append(line_data)
+                        await output_queue.put(
+                            SpackInstallStreamResult(
+                                type=stream_type,
+                                data=line_data,
+                                timestamp=time.time(),
+                                package_name=package_name,
+                                version=version,
+                            )
+                        )
+                except Exception as e:
+                    logger.error(f"Error reading {stream_type} stream", error=str(e))
+                    # Put error in queue to be yielded
                     await output_queue.put(
                         SpackInstallStreamResult(
-                            type=stream_type,
-                            data=line_data,
+                            type="error",
+                            data=f"Error in {stream_type} stream: {str(e)}",
                             timestamp=time.time(),
                             package_name=package_name,
                             version=version,

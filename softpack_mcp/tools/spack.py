@@ -168,11 +168,10 @@ async def install_package_stream(
 
     return StreamingResponse(
         generate_stream(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
             "X-Accel-Buffering": "no",
         },
     )
@@ -471,8 +470,12 @@ async def validate_package_stream(
 
         return StreamingResponse(
             generate_stream(),
-            media_type="text/plain",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
     except Exception as e:
         logger.exception("Failed to validate package with streaming", package=request.package_name, error=str(e))
@@ -490,11 +493,10 @@ async def validate_package_stream(
 
         return StreamingResponse(
             generate_error_stream(),
-            media_type="text/plain",
+            media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Content-Type": "text/event-stream",
                 "X-Accel-Buffering": "no",
             },
         )

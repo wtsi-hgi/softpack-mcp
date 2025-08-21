@@ -1172,16 +1172,23 @@ window.wizardApp = function () {
         });
 
         if (response.ok) {
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let installSuccess = false;
+                  const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let installSuccess = false;
+        let buffer = ""; // Buffer for incomplete data
 
-          while (true) {
+        while (true) {
+          try {
             const { done, value } = await reader.read();
             if (done) break;
 
             const chunk = decoder.decode(value);
-            const lines = chunk.split("\n");
+            buffer += chunk;
+
+            // Split by lines and process complete lines
+            const lines = buffer.split("\n");
+            // Keep the last line in buffer if it's incomplete
+            buffer = lines.pop() || "";
 
             for (const line of lines) {
               if (line.startsWith("data: ")) {
@@ -1214,10 +1221,25 @@ window.wizardApp = function () {
                   console.error("Failed to parse SSE data:", e);
                   console.error("Problematic line:", line);
                   console.error("JSON data that failed:", line.slice(6));
+                  // Add error to output for user visibility
+                  this.installOutput.push({
+                    type: "error",
+                    data: `Failed to parse stream data: ${e.message}`,
+                    timestamp: Date.now() / 1000,
+                  });
                 }
               }
             }
+          } catch (streamError) {
+            console.error("Stream reading error:", streamError);
+            this.installOutput.push({
+              type: "error",
+              data: `Stream error: ${streamError.message}`,
+              timestamp: Date.now() / 1000,
+            });
+            break;
           }
+        }
 
           this.buildSuccess = installSuccess ? "yes" : "no";
           // The installResult is now set in the complete event above
@@ -1277,37 +1299,59 @@ window.wizardApp = function () {
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = ""; // Buffer for incomplete data
 
         while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+          try {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
+            const chunk = decoder.decode(value);
+            buffer += chunk;
 
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                this.validationOutput.push(data);
+            // Split by lines and process complete lines
+            const lines = buffer.split("\n");
+            // Keep the last line in buffer if it's incomplete
+            buffer = lines.pop() || "";
 
-                // Update validation success on completion
-                if (data.type === "complete") {
-                  this.validationSuccess = data.success ? "yes" : "no";
-                  this.validationCompleted = true;
-                  this.apiResults.validationResult = {
-                    success: data.success || false,
-                    message: data.data || "Validation completed",
-                    package_name: data.package_name || this.packageName,
-                    package_type: data.package_type || "python",
-                    validation_command: data.validation_command || "Command not available",
-                    validation_output: this.validationOutput.map((o) => o.data).join("\n"),
-                  };
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  this.validationOutput.push(data);
+
+                  // Update validation success on completion
+                  if (data.type === "complete") {
+                    this.validationSuccess = data.success ? "yes" : "no";
+                    this.validationCompleted = true;
+                    this.apiResults.validationResult = {
+                      success: data.success || false,
+                      message: data.data || "Validation completed",
+                      package_name: data.package_name || this.packageName,
+                      package_type: data.package_type || "python",
+                      validation_command: data.validation_command || "Command not available",
+                      validation_output: this.validationOutput.map((o) => o.data).join("\n"),
+                    };
+                  }
+                } catch (e) {
+                  console.error("Failed to parse validation stream data:", e);
+                  // Add error to output for user visibility
+                  this.validationOutput.push({
+                    type: "error",
+                    data: `Failed to parse validation stream data: ${e.message}`,
+                    timestamp: Date.now() / 1000,
+                  });
                 }
-              } catch (e) {
-                console.error("Failed to parse validation stream data:", e);
               }
             }
+          } catch (streamError) {
+            console.error("Validation stream reading error:", streamError);
+            this.validationOutput.push({
+              type: "error",
+              data: `Validation stream error: ${streamError.message}`,
+              timestamp: Date.now() / 1000,
+            });
+            break;
           }
         }
       } catch (error) {
