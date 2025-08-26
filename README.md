@@ -281,23 +281,6 @@ uv run ruff format .
 uv run pre-commit run --all-files
 ```
 
-### System Service
-
-```bash
-# Install as system service
-make svc-install
-
-# Start/stop service
-make svc-start
-make svc-stop
-make svc-restart
-
-# View logs
-make svc-logs
-
-# Uninstall service
-make svc-uninstall
-```
 
 ## Project Structure
 
@@ -335,7 +318,6 @@ softpack-mcp/
 ├── index.html             # Web wizard interface for package creation
 ├── serve_frontend.py      # Frontend server
 ├── run_both.py           # Combined server runner
-├── softpack-mcp.service  # Systemd service file
 ├── Makefile              # Build and run commands
 ├── pyproject.toml        # Project configuration
 └── README.md            # This file

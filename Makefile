@@ -98,24 +98,3 @@ test-integration:
 	@echo "📦 Testing full workflow: session → recipe → copy → build → validate"
 	@echo "⏱️  This may take several minutes..."
 	/usr/bin/python3 run_integration_test.py
-
-svc-install:
-	sudo cp softpack-mcp.service /etc/systemd/system/
-	sudo systemctl daemon-reload
-	sudo systemctl enable softpack-mcp
-	sudo systemctl start softpack-mcp
-
-svc-uninstall:
-	sudo systemctl stop softpack-mcp
-	sudo systemctl disable softpack-mcp
-	sudo rm /etc/systemd/system/softpack-mcp.service
-	sudo systemctl daemon-reload
-
-svc-restart:
-	sudo systemctl restart softpack-mcp
-
-svc-stop:
-	sudo systemctl stop softpack-mcp
-
-svc-logs:
-	journalctl -u softpack-mcp -f --no-pager
